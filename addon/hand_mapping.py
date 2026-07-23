@@ -86,12 +86,17 @@ def apply_hand(
     def bone(name: str):
         return pose_bones.get(resolve_bone_name(name, prefix, suffix))
 
-    hand_bone = bone(f"hand.{side}")
-    if hand_bone is not None:
-        orientation = _hand_orientation_matrix(lm(WRIST), lm(MIDDLE_MCP), lm(INDEX_MCP), lm(PINKY_MCP))
-        if orientation is not None:
-            _apply_full_rotation(hand_bone, orientation, armature_obj)
-            bpy.context.view_layer.update()
+    # Rotation du poignet temporairement désactivée : validée correcte sur
+    # le rig de test, mais une mauvaise calibration sur un autre rig (les
+    # doigts en sont enfants) peut faire dérailler tout le calcul des
+    # doigts en cascade — même symptôme que la torsion bassin/jambes.
+    # Décommenter pour retester une fois la convention d'axes vérifiée.
+    # hand_bone = bone(f"hand.{side}")
+    # if hand_bone is not None:
+    #     orientation = _hand_orientation_matrix(lm(WRIST), lm(MIDDLE_MCP), lm(INDEX_MCP), lm(PINKY_MCP))
+    #     if orientation is not None:
+    #         _apply_full_rotation(hand_bone, orientation, armature_obj)
+    #         bpy.context.view_layer.update()
 
     for finger_name, indices in FINGER_LANDMARKS:
         for seg_index in range(3):
