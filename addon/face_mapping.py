@@ -66,18 +66,22 @@ def apply_head_rotation(
         return
 
     bone = pose_bone.bone
-    if pose_bone.parent is not None:
-        parent_world_rot = pose_bone.parent.matrix.to_3x3()
-        rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
-    else:
-        parent_world_rot = armature_obj.matrix_world.to_3x3()
-        rest_local_rot = bone.matrix_local.to_3x3()
-    rest_world_rot = parent_world_rot @ rest_local_rot
+    try:
+        if pose_bone.parent is not None:
+            parent_world_rot = pose_bone.parent.matrix.to_3x3()
+            rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
+        else:
+            parent_world_rot = armature_obj.matrix_world.to_3x3()
+            rest_local_rot = bone.matrix_local.to_3x3()
+        rest_world_rot = parent_world_rot @ rest_local_rot
 
-    r_mp = Matrix((tuple(rotation_9[0:3]), tuple(rotation_9[3:6]), tuple(rotation_9[6:9])))
-    r_rig = _MP_TO_RIG @ r_mp @ _MP_TO_RIG.transposed()
+        r_mp = Matrix((tuple(rotation_9[0:3]), tuple(rotation_9[3:6]), tuple(rotation_9[6:9])))
+        r_rig = _MP_TO_RIG @ r_mp @ _MP_TO_RIG.transposed()
 
-    local_rot = rest_world_rot.inverted() @ r_rig @ rest_world_rot
+        local_rot = rest_world_rot.inverted() @ r_rig @ rest_world_rot
+    except ValueError:
+        print(f"[CORPUS-MOCAP] Matrice de repos non-inversible pour l'os '{bone.name}' — gelé cette trame.")
+        return
 
     pose_bone.rotation_mode = "QUATERNION"
     pose_bone.rotation_quaternion = local_rot.to_quaternion()

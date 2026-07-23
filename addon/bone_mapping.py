@@ -147,22 +147,32 @@ def _aim_bone(pose_bone: bpy.types.PoseBone, target_dir_world: Vector, armature_
     `target_dir_world`, exprimé dans l'espace du rig. Utilise la matrice
     monde *actuelle* du parent (`pose_bone.parent.matrix`), donc l'appelant
     doit avoir rafraîchi le depsgraph (`view_layer.update()`) si le parent
-    vient d'être modifié dans la même trame."""
+    vient d'être modifié dans la même trame.
+
+    Gèle silencieusement (ne touche pas à la rotation) si une matrice de
+    repos s'avère non-inversible (bone à l'échelle/configuration
+    dégénérée dans le rig cible) plutôt que de planter toute la capture —
+    voir aussi print de diagnostic pour repérer l'os fautif."""
     bone = pose_bone.bone
-    if pose_bone.parent is not None:
-        parent_world_rot = pose_bone.parent.matrix.to_3x3()
-        rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
-    else:
-        parent_world_rot = armature_obj.matrix_world.to_3x3()
-        rest_local_rot = bone.matrix_local.to_3x3()
+    try:
+        if pose_bone.parent is not None:
+            parent_world_rot = pose_bone.parent.matrix.to_3x3()
+            rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
+        else:
+            parent_world_rot = armature_obj.matrix_world.to_3x3()
+            rest_local_rot = bone.matrix_local.to_3x3()
 
-    rest_world_rot = parent_world_rot @ rest_local_rot
+        rest_world_rot = parent_world_rot @ rest_local_rot
 
-    target = target_dir_world.normalized()
-    if target.length_squared < 1e-8:
+        target = target_dir_world.normalized()
+        if target.length_squared < 1e-8:
+            return
+
+        local_target = (rest_world_rot.inverted() @ target).normalized()
+    except ValueError:
+        print(f"[CORPUS-MOCAP] Matrice de repos non-inversible pour l'os '{bone.name}' — gelé cette trame.")
         return
 
-    local_target = (rest_world_rot.inverted() @ target).normalized()
     quat = Vector((0.0, 1.0, 0.0)).rotation_difference(local_target)
 
     pose_bone.rotation_mode = "QUATERNION"
@@ -190,15 +200,19 @@ def _apply_full_rotation(
     l'épaule correspondante, ce qui peut être interprété à tort comme une
     rotation du buste)."""
     bone = pose_bone.bone
-    if pose_bone.parent is not None:
-        parent_world_rot = pose_bone.parent.matrix.to_3x3()
-        rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
-    else:
-        parent_world_rot = armature_obj.matrix_world.to_3x3()
-        rest_local_rot = bone.matrix_local.to_3x3()
-    rest_world_rot = parent_world_rot @ rest_local_rot
+    try:
+        if pose_bone.parent is not None:
+            parent_world_rot = pose_bone.parent.matrix.to_3x3()
+            rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
+        else:
+            parent_world_rot = armature_obj.matrix_world.to_3x3()
+            rest_local_rot = bone.matrix_local.to_3x3()
+        rest_world_rot = parent_world_rot @ rest_local_rot
 
-    local_rot = rest_world_rot.inverted() @ world_target_rot @ rest_world_rot
+        local_rot = rest_world_rot.inverted() @ world_target_rot @ rest_world_rot
+    except ValueError:
+        print(f"[CORPUS-MOCAP] Matrice de repos non-inversible pour l'os '{bone.name}' — gelé cette trame.")
+        return
     quat = local_rot.to_quaternion()
 
     if twist_damping < 1.0:
