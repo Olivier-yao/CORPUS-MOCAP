@@ -157,12 +157,19 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
 - Aperçu caméra : le corps n'affiche que les 33 points MediaPipe Pose
   (pas de maillage dense disponible côté corps, contrairement au visage
   qui en a 478).
-- Mains/doigts (`addon/hand_mapping.py`) : même méthode "aim" simplifiée
-  que les membres (pas de torsion). Pas de gel sur confiance basse
-  (MediaPipe Hand Landmarker ne donne pas de score de visibilité par
-  point comme Pose) — une main est soit suivie entièrement, soit gelée
-  entièrement si non détectée. Sensible à l'occlusion doigt-sur-doigt
-  (même limite mono-caméra que le reste du corps).
+- Mains/doigts (`addon/hand_mapping.py`) : doigts en simple "aim" (pas de
+  torsion). Poignet (`hand.L/R`) en rotation complète 3-DOF (pronation/
+  supination captée, `_hand_orientation_matrix`) — **validé fonctionnel**,
+  mais avec un angle mort mono-caméra confirmé : si l'avant-bras pointe à
+  peu près vers la caméra, la rotation du poignet autour de cet axe est
+  quasi invisible en 2D (silhouette qui change à peine), donc peu/pas
+  suivie. Fonctionne bien quand le bras est plus perpendiculaire à l'axe
+  caméra (ex: bras tendu sur le côté). Limite géométrique du mono-caméra,
+  pas un bug — la Phase 5 (multi-caméra) la résoudrait. Pas de gel sur
+  confiance basse (MediaPipe Hand Landmarker ne donne pas de score de
+  visibilité par point comme Pose) — une main est soit suivie entièrement,
+  soit gelée entièrement si non détectée. Sensible à l'occlusion
+  doigt-sur-doigt (même limite mono-caméra).
 - Torsion buste/bassin (pivoter sans se pencher) : **tentée puis
   retirée** cette itération — le code existe (`_torso_orientation_matrix`,
   `_apply_full_rotation`, `TORSO_TWIST_DAMPING`, non utilisés actuellement)
