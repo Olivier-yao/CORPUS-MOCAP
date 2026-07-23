@@ -24,10 +24,13 @@ class VIEW3D_PT_corpus_mocap(bpy.types.Panel):
         mapping_box.operator(
             "mocap.apply_bone_affixes", text="Appliquer aux os sélectionnés", icon="SORTALPHA"
         )
+        mapping_box.operator(
+            "mocap.interactive_bone_mapping", text="Associer les os par clic", icon="RESTRICT_SELECT_OFF"
+        )
         if context.mode == "EDIT_ARMATURE":
-            mapping_box.label(text="Sélectionnez les os à renommer en Edit Mode", icon="INFO")
+            mapping_box.label(text="Boutons actifs — os à renommer en Edit Mode", icon="INFO")
         else:
-            mapping_box.label(text="(bouton actif en Edit Mode sur l'armature)", icon="INFO")
+            mapping_box.label(text="(boutons actifs en Edit Mode sur l'armature)", icon="INFO")
 
         box = layout.box()
         box.label(text="Source : Webcam PC")

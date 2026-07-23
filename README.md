@@ -119,10 +119,18 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
    os** dans le panneau — ex. préfixe `DEF-` pour un rig où l'attente
    `hips` correspond en réalité à `DEF-hips` (à condition que cet os soit
    directement animable, pas piloté par une contrainte — voir Limites
-   connues). Si vos noms ne suivent aucun préfixe/suffixe cohérent, deux
-   options : les renommer à la main, ou sélectionner les os concernés en
-   **Edit Mode** puis cliquer **"Appliquer aux os sélectionnés"** dans le
-   panneau pour leur ajouter en bloc le préfixe/suffixe renseigné.
+   connues). Trois façons de faire correspondre les noms sinon :
+   - **Préfixe/suffixe cohérent** : le renseigner directement (ci-dessus).
+   - **Renommage en bloc** : sélectionner les os concernés en **Edit
+     Mode**, cliquer **"Appliquer aux os sélectionnés"** pour leur
+     ajouter le préfixe/suffixe renseigné.
+   - **Convention totalement différente** (ex: `lowerarm_r` au lieu de
+     `forearm.R`) : cliquer **"Associer les os par clic"** (Edit Mode) —
+     l'addon annonce un nom attendu à la fois (barre de statut en bas de
+     la fenêtre), vous cliquez l'os correspondant dans la vue 3D ou
+     l'Outliner puis `Entrée` pour valider (renomme l'os cliqué vers le
+     nom canonique), `S` pour passer un rôle que votre rig n'a pas,
+     `Echap` pour arrêter.
 5. Ajuster **Stabilité** si besoin (léger = plus réactif, fort = plus lissé).
 6. Cliquer **● Enregistrer la performance** — la webcam s'active côté
    `capture_server`, le rig, le visage et/ou les mains doivent suivre vos

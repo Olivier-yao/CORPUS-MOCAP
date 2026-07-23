@@ -252,7 +252,95 @@ class MOCAP_OT_apply_bone_affixes(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (MOCAP_OT_toggle_capture, MOCAP_OT_reset_rig, MOCAP_OT_apply_bone_affixes)
+def _all_expected_roles() -> list[str]:
+    """Liste ordonnée de tous les noms d'os canoniques (sans préfixe/
+    suffixe) que CORPUS-MOCAP sait animer — corps, tête, main gauche,
+    main droite."""
+    roles = list(bone_mapping.get_animated_bone_names())
+    roles.append(face_mapping.HEAD_BONE_NAME)
+    roles.extend(hand_mapping.get_animated_bone_names("L"))
+    roles.extend(hand_mapping.get_animated_bone_names("R"))
+    return roles
+
+
+class MOCAP_OT_interactive_bone_mapping(bpy.types.Operator):
+    """Associe interactivement les os de votre rig aux noms attendus par
+    CORPUS-MOCAP : pour chaque rôle affiché en bas de la fenêtre, cliquez
+    l'os correspondant (vue 3D ou Outliner) puis validez avec Entrée.
+    Passez les rôles sans équivalent dans votre rig avec S. Renomme
+    directement l'os actif vers le nom canonique attendu (Edit Mode)."""
+
+    bl_idname = "mocap.interactive_bone_mapping"
+    bl_label = "Associer les os par clic"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return (
+            context.mode == 'EDIT_ARMATURE'
+            and context.active_object is not None
+            and context.active_object.type == 'ARMATURE'
+        )
+
+    def invoke(self, context, event):
+        self._roles = _all_expected_roles()
+        self._index = 0
+        self._mapped = 0
+        self._skipped = 0
+        self._update_status(context)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _update_status(self, context):
+        if self._index < len(self._roles):
+            role = self._roles[self._index]
+            context.workspace.status_text_set(
+                f"CORPUS-MOCAP [{self._index + 1}/{len(self._roles)}] cliquez l'os pour \"{role}\" "
+                "puis Entrée pour valider  |  S : passer  |  Echap : arrêter"
+            )
+        else:
+            context.workspace.status_text_set(None)
+
+    def _finish(self, context, message):
+        context.workspace.status_text_set(None)
+        self.report({'INFO'}, message)
+
+    def modal(self, context, event):
+        if self._index >= len(self._roles):
+            self._finish(context, f"Terminé : {self._mapped} os associés, {self._skipped} passés")
+            return {'FINISHED'}
+
+        if event.type == 'ESC':
+            self._finish(context, f"Arrêté : {self._mapped} os associés, {self._skipped} passés")
+            return {'CANCELLED'}
+
+        if event.type == 'S' and event.value == 'PRESS':
+            self._skipped += 1
+            self._index += 1
+            self._update_status(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            active = context.active_bone
+            if active is None:
+                self.report({'WARNING'}, "Aucun os actif — cliquez un os d'abord")
+            else:
+                active.name = self._roles[self._index]
+                self._mapped += 1
+                self._index += 1
+                self._update_status(context)
+            return {'RUNNING_MODAL'}
+
+        # Laisse passer clics, sélection, orbite/zoom normalement.
+        return {'PASS_THROUGH'}
+
+
+CLASSES = (
+    MOCAP_OT_toggle_capture,
+    MOCAP_OT_reset_rig,
+    MOCAP_OT_apply_bone_affixes,
+    MOCAP_OT_interactive_bone_mapping,
+)
 
 
 def register():
