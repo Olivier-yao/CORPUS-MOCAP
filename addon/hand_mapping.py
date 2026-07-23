@@ -45,6 +45,12 @@ PINKY_MCP = 17
 # de profondeur, le plus bruité en mono-caméra RGB.
 HAND_DEPTH_DAMPING = 0.4
 
+# Idem pour les segments de doigts : ce sont des os très courts, donc le
+# même niveau de bruit sur l'axe de profondeur produit une erreur
+# angulaire bien plus grande que sur un os long (bras, jambe) — d'où un
+# amortissement plus fort ici.
+FINGER_DEPTH_DAMPING = 0.25
+
 
 def _hand_orientation_matrix(wrist: Vector, middle_mcp: Vector, index_mcp: Vector, pinky_mcp: Vector) -> Matrix | None:
     """Matrice de rotation 3x3 (axes du rig : X droite, Y devant soi, Z
@@ -105,7 +111,9 @@ def apply_hand(
                 continue
             start = lm(indices[seg_index])
             end = lm(indices[seg_index + 1])
-            _aim_bone(pose_bone, end - start, armature_obj)
+            direction = end - start
+            direction.y *= FINGER_DEPTH_DAMPING
+            _aim_bone(pose_bone, direction, armature_obj)
             bpy.context.view_layer.update()
 
 
