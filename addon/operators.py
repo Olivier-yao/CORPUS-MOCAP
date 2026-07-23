@@ -294,9 +294,10 @@ class MOCAP_OT_interactive_bone_mapping(bpy.types.Operator):
     def _update_status(self, context):
         if self._index < len(self._roles):
             role = self._roles[self._index]
+            translation = bone_mapping.translate_role_name(role)
             context.workspace.status_text_set(
-                f"CORPUS-MOCAP [{self._index + 1}/{len(self._roles)}] cliquez l'os pour \"{role}\" "
-                "puis Entrée pour valider  |  S : passer  |  Echap : arrêter"
+                f"CORPUS-MOCAP [{self._index + 1}/{len(self._roles)}] cliquez l'os pour "
+                f"\"{role}\" ({translation}) puis Entrée pour valider  |  S : passer  |  Echap : arrêter"
             )
         else:
             context.workspace.status_text_set(None)

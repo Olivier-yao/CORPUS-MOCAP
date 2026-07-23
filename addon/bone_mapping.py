@@ -82,6 +82,53 @@ def resolve_bone_name(base_name: str, prefix: str = "", suffix: str = "") -> str
     return f"{prefix}{base_name}{suffix}"
 
 
+# Traductions pour l'outil "Associer les os par clic" (addon/operators.py) —
+# aide à la compréhension des noms d'os anglais de la convention CORPUS-MOCAP.
+# (label, féminin ?) — pour l'accord de "droit/droite" ("gauche" est invariable.
+_ROLE_BASE_TRANSLATIONS = {
+    "hips": ("Bassin", False),
+    "spine": ("Colonne / buste", True),
+    "upper_arm": ("Bras (haut)", False),
+    "forearm": ("Avant-bras", False),
+    "thigh": ("Cuisse", True),
+    "shin": ("Tibia", False),
+    "head": ("Tête", True),
+    "hand": ("Main", True),
+    "thumb": ("Pouce", False),
+    "index": ("Index", False),
+    "middle": ("Majeur", False),
+    "ring": ("Annulaire", False),
+    "pinky": ("Auriculaire", False),
+}
+_ROLE_SEGMENT_TRANSLATIONS = {"01": "base", "02": "milieu", "03": "bout"}
+
+
+def _side_label(side_code: str, feminine: bool) -> str:
+    if side_code == "L":
+        return "gauche"
+    if side_code == "R":
+        return "droite" if feminine else "droit"
+    return side_code
+
+
+def translate_role_name(role: str) -> str:
+    """Traduction française indicative d'un nom d'os canonique, ex.
+    "thumb.01.L" -> "Pouce gauche - base". Purement informatif (affichage),
+    ne remplace pas le nom anglais utilisé pour la recherche/le mapping."""
+    parts = role.split(".")
+    label, feminine = _ROLE_BASE_TRANSLATIONS.get(parts[0], (parts[0], False))
+    if len(parts) == 1:
+        return label
+    if len(parts) == 2:
+        side = _side_label(parts[1], feminine)
+        return f"{label} {side}"
+    if len(parts) == 3:
+        segment = _ROLE_SEGMENT_TRANSLATIONS.get(parts[1], parts[1])
+        side = _side_label(parts[2], feminine)
+        return f"{label} {side} - {segment}"
+    return label
+
+
 def _visible(landmarks: list[dict], name: str) -> bool:
     return landmarks[LANDMARK_INDEX[name]]["visibility"] >= VISIBILITY_THRESHOLD
 
