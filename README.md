@@ -117,9 +117,12 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
    etc. (ex: un rig auto-généré type Rigify qui préfixe ses os de
    déformation en `DEF-`), renseignez **Préfixe des os** / **Suffixe des
    os** dans le panneau — ex. préfixe `DEF-` pour un rig où l'attente
-   `hips` correspond en réalité à `DEF-hips`. Si vos noms ne suivent
-   aucun préfixe/suffixe cohérent, il faut renommer les os pour
-   correspondre à la convention.
+   `hips` correspond en réalité à `DEF-hips` (à condition que cet os soit
+   directement animable, pas piloté par une contrainte — voir Limites
+   connues). Si vos noms ne suivent aucun préfixe/suffixe cohérent, deux
+   options : les renommer à la main, ou sélectionner les os concernés en
+   **Edit Mode** puis cliquer **"Appliquer aux os sélectionnés"** dans le
+   panneau pour leur ajouter en bloc le préfixe/suffixe renseigné.
 5. Ajuster **Stabilité** si besoin (léger = plus réactif, fort = plus lissé).
 6. Cliquer **● Enregistrer la performance** — la webcam s'active côté
    `capture_server`, le rig, le visage et/ou les mains doivent suivre vos
@@ -136,8 +139,18 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
   attendus — couvre le cas d'un rig auto-généré avec une convention
   cohérente (ex. Rigify `DEF-`), mais pas un remapping par bone
   individuel. Si vos noms ne suivent aucun préfixe/suffixe cohérent, il
-  faut renommer les os pour correspondre à la convention par défaut de
-  `tools/generate_test_rig.py`.
+  faut renommer les os (à la main, ou via le bouton "Appliquer aux os
+  sélectionnés" en Edit Mode) pour correspondre à la convention par
+  défaut de `tools/generate_test_rig.py`.
+- **Rigs à contraintes (Rigify)** : les os de déformation (`DEF-...`)
+  d'un rig Rigify généré suivent généralement des os de contrôle via des
+  contraintes (Copy Rotation/Transforms) plutôt que d'être directement
+  animables. Notre addon écrit une rotation directement sur l'os ciblé :
+  si cet os est contraint, la contrainte l'emporte et la capture n'a
+  visuellement aucun effet. Vérifiez l'onglet Bone Constraint Properties
+  de l'os visé avant de vous fier au mapping — ciblez l'os de contrôle
+  (généralement sans le préfixe `DEF-`) si l'os de déformation est
+  contraint.
 - Retargeting simplifié ("aim" sans gestion du twist/roll) : suffisant
   pour valider le concept, pas encore un rendu final.
 - **Le cadrage caméra doit couvrir tout le corps** (jusqu'aux pieds) pour

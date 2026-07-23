@@ -209,7 +209,50 @@ class MOCAP_OT_reset_rig(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (MOCAP_OT_toggle_capture, MOCAP_OT_reset_rig)
+class MOCAP_OT_apply_bone_affixes(bpy.types.Operator):
+    """Ajoute le préfixe/suffixe des os configurés (panneau CORPUS-MOCAP)
+    aux noms des os actuellement sélectionnés — à utiliser en Edit Mode
+    sur l'armature. Utile pour faire correspondre les os d'un rig
+    personnalisé à la convention CORPUS-MOCAP en les renommant en bloc,
+    plutôt qu'un par un. (Les mêmes champs Préfixe/Suffixe servent aussi,
+    au moment de la capture, à *chercher* des os déjà nommés ainsi — ex.
+    un rig Rigify dont les os de déformation sont déjà préfixés "DEF-" :
+    dans ce cas pas besoin de ce bouton, la recherche suffit.)"""
+
+    bl_idname = "mocap.apply_bone_affixes"
+    bl_label = "Appliquer aux os sélectionnés"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return (
+            context.mode == 'EDIT_ARMATURE'
+            and context.active_object is not None
+            and context.active_object.type == 'ARMATURE'
+        )
+
+    def execute(self, context):
+        settings = context.scene.corpus_mocap
+        prefix, suffix = settings.bone_prefix, settings.bone_suffix
+        if not prefix and not suffix:
+            self.report({'WARNING'}, "Préfixe et suffixe vides — rien à faire")
+            return {'CANCELLED'}
+
+        selected_bones = context.selected_editable_bones
+        if not selected_bones:
+            self.report({'WARNING'}, "Aucun os sélectionné")
+            return {'CANCELLED'}
+
+        count = 0
+        for edit_bone in selected_bones:
+            edit_bone.name = f"{prefix}{edit_bone.name}{suffix}"
+            count += 1
+
+        self.report({'INFO'}, f"{count} os renommés")
+        return {'FINISHED'}
+
+
+CLASSES = (MOCAP_OT_toggle_capture, MOCAP_OT_reset_rig, MOCAP_OT_apply_bone_affixes)
 
 
 def register():
