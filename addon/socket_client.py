@@ -29,7 +29,8 @@ class MocapSocketClient:
     def poll_latest(self) -> dict[str, dict]:
         """Lit toutes les données disponibles et ne garde que la dernière
         trame complète par type de message ("frame" pour le corps, "face"
-        pour le visage) — on veut du temps réel, pas un historique."""
+        pour le visage, "hands" pour les mains) — on veut du temps réel,
+        pas un historique."""
         try:
             data = self._sock.recv(65536)
             if not data:
@@ -50,7 +51,7 @@ class MocapSocketClient:
             except json.JSONDecodeError:
                 continue
             msg_type = msg.get("type")
-            if msg_type in ("frame", "face"):
+            if msg_type in ("frame", "face", "hands"):
                 latest_by_type[msg_type] = msg
         return latest_by_type
 

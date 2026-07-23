@@ -183,3 +183,55 @@ class HeadRotationFilter:
         now = time.monotonic()
         smoothed = [self._filters[i].filter(raw[i], now) for i in range(9)]
         return _orthonormalize_3x3(smoothed)
+
+
+class HandFilter:
+    """Filtre les landmarks des deux mains (21 points chacune). Les
+    filtres par main sont créés à la volée à la première détection de
+    cette main (pas de gel sur perte de tracking, comme pour le visage :
+    on renvoie simplement None pour la main non détectée)."""
+
+    def __init__(self, num_landmarks: int = 21):
+        self._num_landmarks = num_landmarks
+        self._filters: dict[str, list[dict] | None] = {"left": None, "right": None}
+        self._min_cutoff = 1.0
+        self._beta = 0.0
+        self.set_stability(0.5)
+
+    def set_stability(self, stability: float) -> None:
+        stability = max(0.0, min(1.0, stability))
+        self._min_cutoff = 1.0 - 0.9 * stability
+        self._beta = 0.7 * (1.0 - stability)
+        for side_filters in self._filters.values():
+            if side_filters is None:
+                continue
+            for lm_filters in side_filters:
+                for f in lm_filters.values():
+                    f.min_cutoff = self._min_cutoff
+                    f.beta = self._beta
+
+    def process(self, raw: dict[str, list[dict] | None] | None) -> dict[str, list[dict] | None] | None:
+        if raw is None:
+            return None
+        now = time.monotonic()
+        result: dict[str, list[dict] | None] = {}
+        for side in ("left", "right"):
+            points = raw.get(side)
+            if points is None:
+                result[side] = None
+                continue
+            if self._filters[side] is None:
+                self._filters[side] = [
+                    {axis: OneEuroFilter(self._min_cutoff, self._beta) for axis in ("x", "y", "z")}
+                    for _ in range(self._num_landmarks)
+                ]
+            filters = self._filters[side]
+            result[side] = [
+                {
+                    "x": filters[i]["x"].filter(p["x"], now),
+                    "y": filters[i]["y"].filter(p["y"], now),
+                    "z": filters[i]["z"].filter(p["z"], now),
+                }
+                for i, p in enumerate(points)
+            ]
+        return result

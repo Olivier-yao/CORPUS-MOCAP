@@ -3,9 +3,9 @@
 Les messages circulent sur un socket TCP, un objet JSON par ligne
 (terminée par '\n'). Deux directions :
 
-- server -> addon : trames corps (voir `build_frame_message`) et trames
-  visage (voir `build_face_message`), envoyées indépendamment sur la
-  même connexion
+- server -> addon : trames corps (voir `build_frame_message`), trames
+  visage (voir `build_face_message`) et trames mains (voir
+  `build_hands_message`), envoyées indépendamment sur la même connexion
 - addon -> server  : messages de contrôle (voir `build_control_message`)
 """
 
@@ -30,6 +30,7 @@ LANDMARK_INDEX = {
 }
 
 NUM_LANDMARKS = 33
+NUM_HAND_LANDMARKS = 21
 
 
 def build_frame_message(landmarks: list[dict], tracking_ok: bool) -> dict:
@@ -56,6 +57,18 @@ def build_face_message(
         "tracking_ok": tracking_ok,
         "blendshapes": blendshapes,
         "head_rotation": head_rotation,
+    }
+
+
+def build_hands_message(hands: dict[str, list[dict] | None], tracking_ok: bool) -> dict:
+    """hands: {"left": [21 dicts {x,y,z}] | None, "right": [...] | None} —
+    "left"/"right" selon la classification "handedness" de MediaPipe
+    (main anatomique du sujet, même convention que left_shoulder/
+    right_shoulder pour le corps)."""
+    return {
+        "type": "hands",
+        "tracking_ok": tracking_ok,
+        "hands": hands,
     }
 
 

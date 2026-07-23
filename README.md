@@ -1,12 +1,13 @@
-# CORPUS-MOCAP — Phases 1+2 (corps + visage, webcam PC)
+# CORPUS-MOCAP — corps + visage + mains (webcam PC)
 
 Addon Blender de capture de mouvement. Couvre pour l'instant : capture du
-squelette (33 points MediaPipe Pose) et du visage (MediaPipe Face
-Landmarker, 52 coefficients blend shapes ARKit) via webcam PC, lissage
-corps (One Euro Filter), application temps réel sur un rig + un mesh à
-shape keys, enregistrement synchronisé en Actions Blender. Pas de
-stylisation cartoon, pas de téléphone (voir
-`CORPUS-MOCAP_cahier-des-charges.md`).
+squelette (33 points MediaPipe Pose), du visage (MediaPipe Face
+Landmarker, 52 coefficients blend shapes ARKit) et des mains (MediaPipe
+Hand Landmarker, 21 points articulés par main) via webcam PC, lissage
+(One Euro Filter), application temps réel sur un rig + un mesh à shape
+keys, enregistrement synchronisé en Actions Blender. Pas de stylisation
+cartoon, pas de téléphone (voir `CORPUS-MOCAP_cahier-des-charges.md` et
+la feuille de route ci-dessous).
 
 ## Architecture
 
@@ -66,18 +67,34 @@ curl.exe -L -o models\face_landmarker.task https://storage.googleapis.com/mediap
 Le tracking visage peut être désactivé avec `python server.py --no-face`
 si seul le corps est nécessaire.
 
-### 4. Rig et visage de test
+### 4. Modèle MediaPipe Hand Landmarker
 
-Si vous n'avez pas encore de personnage rigué, générez les deux :
+Téléchargez `hand_landmarker.task` et placez-le aussi dans
+`capture_server/models/` :
+
+```powershell
+curl.exe -L -o models\hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
+```
+
+Le tracking mains peut être désactivé avec `python server.py --no-hands`.
+
+### 5. Rig, visage et mains de test
+
+Si vous n'avez pas encore de personnage rigué, générez le tout, **dans
+cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
 
 1. Ouvrir Blender, onglet **Scripting**.
 2. Ouvrir `tools/generate_test_rig.py`, cliquer **Run Script** → armature
    `CORPUS_MOCAP_TestRig` (T-pose).
-3. Ouvrir `tools/generate_test_face.py`, cliquer **Run Script** → mesh
+3. Ouvrir `tools/generate_test_hands.py`, cliquer **Run Script** → ajoute
+   les bones de doigts (`thumb.01.L`, `index.02.R`, etc.) à cette même
+   armature.
+4. Ouvrir `tools/generate_test_face.py`, cliquer **Run Script** → mesh
    `CORPUS_MOCAP_TestFace` (sphère à 10 shape keys nommées selon la
-   convention ARKit : `jawOpen`, `eyeBlinkLeft`, `mouthSmileLeft`, etc.).
+   convention ARKit : `jawOpen`, `eyeBlinkLeft`, `mouthSmileLeft`, etc.),
+   attaché au bone "head" du rig.
 
-### 5. Addon
+### 6. Addon
 
 1. Compresser le dossier `addon/` en `addon.zip` (le zip doit contenir
    directement `__init__.py` etc., pas un sous-dossier supplémentaire).
@@ -93,15 +110,17 @@ Si vous n'avez pas encore de personnage rigué, générez les deux :
 3. Choisir l'armature cible (`CORPUS_MOCAP_TestRig` ou votre personnage) et,
    optionnellement, le mesh visage cible (`CORPUS_MOCAP_TestFace` ou votre
    personnage — doit avoir des shape keys nommées selon la convention
-   ARKit pour être reconnu automatiquement).
+   ARKit pour être reconnu automatiquement). Les mains n'ont pas de
+   sélecteur séparé : si l'armature cible a des bones de doigts nommés
+   selon la convention (`thumb.01.L`, etc.), ils sont animés automatiquement.
 4. Ajuster **Stabilité** si besoin (léger = plus réactif, fort = plus lissé).
 5. Cliquer **● Enregistrer la performance** — la webcam s'active côté
-   `capture_server`, le rig et/ou le visage doivent suivre vos mouvements
-   en temps réel.
-6. Cliquer à nouveau pour arrêter : une Action `CORPUS_MOCAP_Take` (corps)
-   et, si un mesh visage était sélectionné, `CORPUS_MOCAP_Face_Take` (sur
-   le datablock Key du mesh) sont créées avec les keyframes de la prise,
-   sur la même timeline.
+   `capture_server`, le rig, le visage et/ou les mains doivent suivre vos
+   mouvements en temps réel.
+6. Cliquer à nouveau pour arrêter : une Action `CORPUS_MOCAP_Take` (corps +
+   mains) et, si un mesh visage était sélectionné, `CORPUS_MOCAP_Face_Take`
+   (sur le datablock Key du mesh) sont créées avec les keyframes de la
+   prise, sur la même timeline.
 
 ## Limites connues
 
@@ -137,8 +156,13 @@ Si vous n'avez pas encore de personnage rigué, générez les deux :
   "Réinitialiser le rig", avant de relancer le script).
 - Aperçu caméra : le corps n'affiche que les 33 points MediaPipe Pose
   (pas de maillage dense disponible côté corps, contrairement au visage
-  qui en a 478). Le tracking mains/doigts n'est pas encore implémenté
-  (voir feuille de route).
+  qui en a 478).
+- Mains/doigts (`addon/hand_mapping.py`) : même méthode "aim" simplifiée
+  que les membres (pas de torsion). Pas de gel sur confiance basse
+  (MediaPipe Hand Landmarker ne donne pas de score de visibilité par
+  point comme Pose) — une main est soit suivie entièrement, soit gelée
+  entièrement si non détectée. Sensible à l'occlusion doigt-sur-doigt
+  (même limite mono-caméra que le reste du corps).
 - Torsion buste/bassin (pivoter sans se pencher) : **tentée puis
   retirée** cette itération — le code existe (`_torso_orientation_matrix`,
   `_apply_full_rotation`, `TORSO_TWIST_DAMPING`, non utilisés actuellement)
@@ -158,15 +182,18 @@ Si vous n'avez pas encore de personnage rigué, générez les deux :
 Ordre prévu (cahier des charges + extensions discutées en cours de route) :
 
 1. **Phase 1 — Corps** (webcam PC) : ✅ fait.
-2. **Phase 2 — Visage** (blend shapes + rotation tête) : en cours de
-   stabilisation (torsion buste/bassin, lissage, précision).
-3. **Phase 3 — Stylisation cartoon** (post-traitement F-Curves : squash &
+2. **Phase 2 — Visage** (blend shapes + rotation tête) : ✅ fait
+   (torsion buste/bassin abandonnée, voir limites connues).
+3. **Mains/doigts** (MediaPipe Hand Landmarker, 21 points par main) :
+   ✅ implémenté, validation en conditions réelles en cours.
+4. **Système de mapping configurable** (noms de bones arbitraires, ex.
+   pour un rig Rigify `DEF-upper_arm.L` — cahier des charges §7) : pas
+   commencé, discuté comme prochaine priorité possible.
+5. **Phase 3 — Stylisation cartoon** (post-traitement F-Curves : squash &
    stretch, amplification, timing) : pas commencé.
-4. **Phase 4 — Compagnon mobile** (un téléphone comme source, via
+6. **Phase 4 — Compagnon mobile** (un téléphone comme source, via
    WebSocket local, même pipeline que la webcam PC) : pas commencé.
-5. **Phase 5 — Multi-caméra** (plusieurs téléphones à angles différents,
+7. **Phase 5 — Multi-caméra** (plusieurs téléphones à angles différents,
    fusion des vues pour plus de précision — d'abord une moyenne pondérée
    par confiance, triangulation calibrée en raffinement ultérieur si
    besoin) : pas commencé, conception détaillée à faire le moment venu.
-6. **Mains/doigts** (MediaPipe Hand Landmarker, 21 points par main) :
-   pas commencé, en attente de la stabilisation Phase 2.

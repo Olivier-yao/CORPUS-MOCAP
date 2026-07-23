@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import bpy
 
-from . import bone_mapping, face_mapping
+from . import bone_mapping, face_mapping, hand_mapping
 from .socket_client import MocapSocketClient, SocketClientError
 
 
@@ -106,8 +106,9 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
 
         frame_msg = messages.get("frame")
         face_msg = messages.get("face")
+        hands_msg = messages.get("hands")
 
-        if frame_msg is None and face_msg is None:
+        if frame_msg is None and face_msg is None and hands_msg is None:
             return {'PASS_THROUGH'}
 
         frame = context.scene.frame_current
@@ -148,6 +149,19 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
                         key_block = key_blocks.get(name)
                         if key_block is not None:
                             key_block.keyframe_insert(data_path="value", frame=frame)
+
+        if hands_msg is not None:
+            hands = hands_msg.get("hands") or {}
+            for side, mp_side in (("L", "left"), ("R", "right")):
+                landmarks = hands.get(mp_side)
+                if landmarks is None:
+                    continue
+                hand_mapping.apply_hand(session.armature, landmarks, side)
+                for bone_name in hand_mapping.get_animated_bone_names(side):
+                    pose_bone = session.armature.pose.bones.get(bone_name)
+                    if pose_bone is None:
+                        continue
+                    pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
 
         context.scene.frame_current = frame + 1
 

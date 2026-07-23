@@ -1,16 +1,18 @@
-"""CORPUS-MOCAP — capture_server (Phase 1+2, source webcam PC).
+"""CORPUS-MOCAP — capture_server (Phase 1+2+mains, source webcam PC).
 
 Process externe, indépendant de Blender : capture la webcam via OpenCV,
-détecte le squelette (MediaPipe Pose) et le visage (MediaPipe Face
-Landmarker, coefficients blend shapes ARKit) via la Tasks API — l'ancienne
-API `mp.solutions.*` a été retirée du paquet à partir de mediapipe 0.10.x
-récents —, lisse le signal corps (One Euro Filter) et diffuse le tout à
+détecte le squelette (MediaPipe Pose), le visage (MediaPipe Face
+Landmarker, coefficients blend shapes ARKit) et les mains (MediaPipe Hand
+Landmarker, 21 points par main) via la Tasks API — l'ancienne API
+`mp.solutions.*` a été retirée du paquet à partir de mediapipe 0.10.x
+récents —, lisse les signaux (One Euro Filter) et diffuse le tout à
 l'addon Blender via un socket TCP local (une ligne JSON par trame, voir
 protocol.py).
 
-Nécessite les modèles "pose_landmarker_lite.task" et "face_landmarker.task"
-dans ./models/ (voir README.md pour le téléchargement). Le visage peut être
-désactivé avec --no-face si seul le corps est nécessaire.
+Nécessite les modèles "pose_landmarker_lite.task", "face_landmarker.task"
+et "hand_landmarker.task" dans ./models/ (voir README.md pour le
+téléchargement). Visage et mains peuvent être désactivés avec --no-face /
+--no-hands si non nécessaires.
 
 Une fenêtre d'aperçu (flux caméra + squelette détecté superposé) s'ouvre
 par défaut pour vérifier le cadrage avant/pendant l'enregistrement dans
@@ -20,6 +22,7 @@ Usage :
     python server.py [--host 127.0.0.1] [--port 9001] [--camera 0]
                       [--model models/pose_landmarker_lite.task]
                       [--face-model models/face_landmarker.task] [--no-face]
+                      [--hand-model models/hand_landmarker.task] [--no-hands]
                       [--no-preview]
 """
 
@@ -38,14 +41,21 @@ import mediapipe as mp
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.core.base_options import BaseOptions
 
-from one_euro_filter import BlendshapeFilter, HeadRotationFilter, LandmarkFilter
-from protocol import LANDMARK_INDEX, NUM_LANDMARKS, build_face_message, build_frame_message
+from one_euro_filter import BlendshapeFilter, HandFilter, HeadRotationFilter, LandmarkFilter
+from protocol import (
+    LANDMARK_INDEX,
+    NUM_LANDMARKS,
+    build_face_message,
+    build_frame_message,
+    build_hands_message,
+)
 
 del LANDMARK_INDEX  # référencé pour clarté ; le mapping vit côté addon
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 DEFAULT_MODEL_PATH = os.path.join(MODELS_DIR, "pose_landmarker_lite.task")
 DEFAULT_FACE_MODEL_PATH = os.path.join(MODELS_DIR, "face_landmarker.task")
+DEFAULT_HAND_MODEL_PATH = os.path.join(MODELS_DIR, "hand_landmarker.task")
 
 PREVIEW_WINDOW_NAME = "CORPUS-MOCAP - Apercu (Echap pour fermer)"
 
@@ -88,6 +98,34 @@ def draw_face_preview(frame_bgr, face_points: list[tuple[float, float]] | None) 
         cv2.circle(frame_bgr, (int(x * w), int(y * h)), 1, (255, 220, 0), -1)
 
 
+# Connexions squelette de main (21 points MediaPipe Hand Landmarker) pour
+# le dessin de l'aperçu — même topologie que l'ancienne
+# mp.solutions.hands.HAND_CONNECTIONS.
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),           # pouce
+    (0, 5), (5, 6), (6, 7), (7, 8),           # index
+    (5, 9), (9, 10), (10, 11), (11, 12),      # majeur
+    (9, 13), (13, 14), (14, 15), (15, 16),    # annulaire
+    (13, 17), (17, 18), (18, 19), (19, 20),   # auriculaire
+    (0, 17),
+]
+
+
+def draw_hands_preview(frame_bgr, hands: dict[str, list[dict]] | None) -> None:
+    """Dessine le squelette des mains détectées (magenta)."""
+    if not hands:
+        return
+    h, w = frame_bgr.shape[:2]
+    for points in hands.values():
+        if not points:
+            continue
+        pixels = [(int(p["x"] * w), int(p["y"] * h)) for p in points]
+        for a, b in HAND_CONNECTIONS:
+            cv2.line(frame_bgr, pixels[a], pixels[b], (220, 0, 220), 2)
+        for x, y in pixels:
+            cv2.circle(frame_bgr, (x, y), 3, (220, 0, 220), -1)
+
+
 class ClientConnection:
     """Gère l'unique client connecté (l'addon Blender) : envoi des trames,
     lecture des messages de contrôle (ex: changement de stabilité)."""
@@ -98,6 +136,7 @@ class ClientConnection:
         landmark_filter: LandmarkFilter,
         blendshape_filter: BlendshapeFilter,
         head_rotation_filter: HeadRotationFilter,
+        hand_filter: HandFilter,
     ):
         self.sock = sock
         self.sock.setblocking(False)
@@ -105,6 +144,7 @@ class ClientConnection:
         self._landmark_filter = landmark_filter
         self._blendshape_filter = blendshape_filter
         self._head_rotation_filter = head_rotation_filter
+        self._hand_filter = hand_filter
         self._lock = threading.Lock()
 
     def send_frame(self, landmarks: list[dict], tracking_ok: bool) -> bool:
@@ -114,6 +154,9 @@ class ClientConnection:
         self, blendshapes: dict[str, float], tracking_ok: bool, head_rotation: list[float] | None = None
     ) -> bool:
         return self._send(build_face_message(blendshapes, tracking_ok, head_rotation))
+
+    def send_hands(self, hands: dict[str, list[dict] | None], tracking_ok: bool) -> bool:
+        return self._send(build_hands_message(hands, tracking_ok))
 
     def _send(self, message: dict) -> bool:
         payload = (json.dumps(message) + "\n").encode("utf-8")
@@ -148,6 +191,7 @@ class ClientConnection:
                 self._landmark_filter.set_stability(value)
                 self._blendshape_filter.set_stability(value)
                 self._head_rotation_filter.set_stability(value)
+                self._hand_filter.set_stability(value)
 
 
 def extract_landmarks(result) -> list[dict] | None:
@@ -190,6 +234,27 @@ def extract_head_rotation(result) -> list[float] | None:
     return [float(m[r][c]) for r in range(3) for c in range(3)]
 
 
+def extract_hands(result) -> dict[str, list[dict]] | None:
+    """Retourne {"left": [21 dicts {x,y,z}] | None, "right": [...] | None}
+    selon la classification "handedness" de MediaPipe (main anatomique du
+    sujet), ou None si aucune main détectée."""
+    if not result.hand_landmarks:
+        return None
+    hands: dict[str, list[dict] | None] = {"left": None, "right": None}
+    for landmarks, handedness in zip(result.hand_landmarks, result.handedness):
+        if not handedness:
+            continue
+        label = handedness[0].category_name
+        points = [{"x": lm.x, "y": lm.y, "z": lm.z} for lm in landmarks]
+        if label == "Left":
+            hands["left"] = points
+        elif label == "Right":
+            hands["right"] = points
+    if hands["left"] is None and hands["right"] is None:
+        return None
+    return hands
+
+
 def create_pose_landmarker(model_path: str) -> vision.PoseLandmarker:
     if not os.path.isfile(model_path):
         raise FileNotFoundError(
@@ -224,17 +289,35 @@ def create_face_landmarker(model_path: str) -> vision.FaceLandmarker:
     return vision.FaceLandmarker.create_from_options(options)
 
 
+def create_hand_landmarker(model_path: str) -> vision.HandLandmarker:
+    if not os.path.isfile(model_path):
+        raise FileNotFoundError(
+            f"Modèle introuvable : {model_path}\n"
+            "Téléchargez hand_landmarker.task (voir README.md) et placez-le dans capture_server/models/."
+        )
+    options = vision.HandLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=model_path),
+        running_mode=vision.RunningMode.VIDEO,
+        num_hands=2,
+        min_hand_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+    return vision.HandLandmarker.create_from_options(options)
+
+
 def run(
     host: str,
     port: int,
     camera_index: int,
     model_path: str,
     face_model_path: str | None,
+    hand_model_path: str | None,
     show_preview: bool = True,
 ) -> None:
     landmark_filter = LandmarkFilter(NUM_LANDMARKS)
     blendshape_filter = BlendshapeFilter()
     head_rotation_filter = HeadRotationFilter()
+    hand_filter = HandFilter()
 
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -255,6 +338,7 @@ def run(
 
     landmarker = create_pose_landmarker(model_path)
     face_landmarker = create_face_landmarker(face_model_path) if face_model_path else None
+    hand_landmarker = create_hand_landmarker(hand_model_path) if hand_model_path else None
     frame_timestamp_ms = 0
 
     client: ClientConnection | None = None
@@ -268,7 +352,9 @@ def run(
                 try:
                     conn, addr = server_sock.accept()
                     print(f"[capture_server] addon connecté depuis {addr}")
-                    client = ClientConnection(conn, landmark_filter, blendshape_filter, head_rotation_filter)
+                    client = ClientConnection(
+                        conn, landmark_filter, blendshape_filter, head_rotation_filter, hand_filter
+                    )
                 except socket.timeout:
                     pass
 
@@ -300,13 +386,27 @@ def run(
                 if show_preview:
                     face_points_2d = extract_face_points_2d(face_result)
 
+            hands = None
+            hands_tracking_ok = False
+            if hand_landmarker is not None:
+                hand_result = hand_landmarker.detect_for_video(mp_image, frame_timestamp_ms)
+                raw_hands = extract_hands(hand_result)
+                hands_tracking_ok = raw_hands is not None
+                hands = hand_filter.process(raw_hands)
+
             if show_preview:
                 draw_preview(frame, raw_landmarks, tracking_ok)
+                if hand_landmarker is not None:
+                    draw_hands_preview(frame, hands)
                 if face_landmarker is not None:
                     draw_face_preview(frame, face_points_2d)
                     face_status = "Visage OK" if face_tracking_ok else "Visage non détecté"
                     face_color = (0, 200, 0) if face_tracking_ok else (0, 0, 220)
                     cv2.putText(frame, face_status, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, face_color, 2)
+                if hand_landmarker is not None:
+                    hands_status = "Mains OK" if hands_tracking_ok else "Mains non détectées"
+                    hands_color = (0, 200, 0) if hands_tracking_ok else (0, 0, 220)
+                    cv2.putText(frame, hands_status, (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.7, hands_color, 2)
                 cv2.imshow(PREVIEW_WINDOW_NAME, frame)
                 if cv2.waitKey(1) & 0xFF == 27:  # Echap : ferme juste l'aperçu, pas le serveur
                     cv2.destroyWindow(PREVIEW_WINDOW_NAME)
@@ -318,7 +418,10 @@ def run(
                 ok_face = True
                 if blendshapes is not None:
                     ok_face = client.send_face(blendshapes, face_tracking_ok, head_rotation)
-                if not (ok_body and ok_face):
+                ok_hands = True
+                if hands is not None:
+                    ok_hands = client.send_hands(hands, hands_tracking_ok)
+                if not (ok_body and ok_face and ok_hands):
                     print("[capture_server] addon déconnecté, en attente d'une nouvelle connexion")
                     client.sock.close()
                     client = None
@@ -330,6 +433,8 @@ def run(
         landmarker.close()
         if face_landmarker is not None:
             face_landmarker.close()
+        if hand_landmarker is not None:
+            hand_landmarker.close()
         server_sock.close()
         cv2.destroyAllWindows()
 
@@ -344,6 +449,10 @@ if __name__ == "__main__":
         "--face-model", default=DEFAULT_FACE_MODEL_PATH, help="Chemin vers le fichier .task du modèle de visage"
     )
     parser.add_argument("--no-face", action="store_true", help="Désactive le tracking du visage")
+    parser.add_argument(
+        "--hand-model", default=DEFAULT_HAND_MODEL_PATH, help="Chemin vers le fichier .task du modèle de mains"
+    )
+    parser.add_argument("--no-hands", action="store_true", help="Désactive le tracking des mains")
     parser.add_argument("--no-preview", action="store_true", help="Désactive la fenêtre d'aperçu caméra")
     args = parser.parse_args()
     run(
@@ -352,5 +461,6 @@ if __name__ == "__main__":
         args.camera,
         args.model,
         None if args.no_face else args.face_model,
+        None if args.no_hands else args.hand_model,
         show_preview=not args.no_preview,
     )
