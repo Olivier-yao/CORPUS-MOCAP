@@ -139,10 +139,15 @@ Si vous n'avez pas encore de personnage rigué, générez les deux :
   (pas de maillage dense disponible côté corps, contrairement au visage
   qui en a 478). Le tracking mains/doigts n'est pas encore implémenté
   (voir feuille de route).
-- Torsion (buste/bassin) : approximation à partir d'une seule caméra RGB,
-  peut manquer de précision. Bras/jambes n'ont toujours pas de torsion
-  individuelle (pas de référence gauche/droite naturelle par membre,
-  contrairement au buste/bassin).
+- Torsion buste/bassin (pivoter sans se pencher) : **tentée puis
+  retirée** cette itération — le code existe (`_torso_orientation_matrix`,
+  `_apply_full_rotation`, `TORSO_TWIST_DAMPING`, non utilisés actuellement)
+  mais a causé plusieurs régressions (position anormale au neutre, rig
+  désarticulé) malgré plusieurs correctifs, impossible à valider
+  entièrement sans accès direct à Blender pour tester. `spine` utilise à
+  nouveau le simple "aim" (2 degrés de liberté, sans torsion) comme les
+  autres membres. À reprendre plus tard avec plus de recul, idéalement
+  avec de meilleures données de profondeur (Phase 5, multi-caméra).
 - Occlusion (ex: bras croisés) : limite du tracking mono-caméra elle-même
   (MediaPipe perd la capacité à distinguer les membres superposés à
   l'écran), pas quelque chose de corrigible par le mapping — voir la

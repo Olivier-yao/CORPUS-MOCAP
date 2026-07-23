@@ -22,7 +22,7 @@ capter la rotation du buste sur lui-même (pivoter sans se pencher).
 from __future__ import annotations
 
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 LANDMARK_INDEX = {
     "left_shoulder": 11, "right_shoulder": 12,
@@ -54,12 +54,23 @@ LIMB_SEGMENTS = [
 ROOT_TRANSLATION_SCALE_LATERAL = 1.5  # X (gauche/droite) et Z (haut/bas)
 ROOT_TRANSLATION_SCALE_DEPTH = 0.3    # Y (profondeur) — axe bruité
 
+# Même logique que ROOT_TRANSLATION_SCALE_DEPTH, appliquée à la direction
+# bassin->épaules du buste : un léger biais de profondeur entre les deux
+# centres (même debout bien droit) suffit à faire pencher tout le buste,
+# le Y (profondeur) étant l'axe le plus bruité en mono-caméra RGB.
+SPINE_DEPTH_DAMPING = 0.3
+
 # En dessous de ce seuil de confiance MediaPipe (0-1), un landmark est
 # considéré "non fiable" (souvent hors cadre) : le membre concerné est
 # gelé (on ne touche pas à sa rotation/position) plutôt que de suivre une
 # position devinée par le modèle, qui donne un mouvement erratique/figé
 # sans rapport avec le geste réel.
 VISIBILITY_THRESHOLD = 0.5
+
+# Amortissement de la torsion buste/bassin (0 = aucune torsion, 1 =
+# pleine sensibilité) — réduit les faux positifs dus au mouvement des
+# bras sans réduire la réactivité de l'inclinaison/direction.
+TORSO_TWIST_DAMPING = 0.5
 
 
 def _visible(landmarks: list[dict], name: str) -> bool:
@@ -102,14 +113,26 @@ def _aim_bone(pose_bone: bpy.types.PoseBone, target_dir_world: Vector, armature_
     pose_bone.rotation_quaternion = quat
 
 
-def _apply_full_rotation(pose_bone: bpy.types.PoseBone, world_target_rot: Matrix, armature_obj: bpy.types.Object) -> None:
+def _apply_full_rotation(
+    pose_bone: bpy.types.PoseBone,
+    world_target_rot: Matrix,
+    armature_obj: bpy.types.Object,
+    twist_damping: float = 1.0,
+) -> None:
     """Applique une rotation complète (3 degrés de liberté, avec torsion)
     à `pose_bone`, à partir d'une matrice de rotation cible exprimée en
     axes du rig (X droite, Y devant soi, Z haut ; identité = pose neutre
     debout face caméra). Même principe de conjugaison par l'orientation
     de repos que `face_mapping.apply_head_rotation` (contrairement à
     `_aim_bone` qui ne contraint que 2 degrés de liberté, la direction,
-    en laissant la torsion libre)."""
+    en laissant la torsion libre).
+
+    `twist_damping` (0-1) réduit la composante de torsion (rotation
+    autour de l'axe Y local du bone) sans toucher à l'inclinaison/
+    direction — utile car la torsion du buste est sensible à des
+    mouvements qui n'en sont pas vraiment (lever un bras déplace un peu
+    l'épaule correspondante, ce qui peut être interprété à tort comme une
+    rotation du buste)."""
     bone = pose_bone.bone
     if pose_bone.parent is not None:
         parent_world_rot = pose_bone.parent.matrix.to_3x3()
@@ -120,8 +143,19 @@ def _apply_full_rotation(pose_bone: bpy.types.PoseBone, world_target_rot: Matrix
     rest_world_rot = parent_world_rot @ rest_local_rot
 
     local_rot = rest_world_rot.inverted() @ world_target_rot @ rest_world_rot
+    quat = local_rot.to_quaternion()
+
+    if twist_damping < 1.0:
+        # Décomposition swing-twist autour de l'axe Y local du bone.
+        twist = Quaternion((quat.w, 0.0, quat.y, 0.0))
+        if twist.magnitude > 1e-6:
+            twist.normalize()
+            swing = quat @ twist.inverted()
+            twist = Quaternion((1.0, 0.0, 0.0, 0.0)).slerp(twist, max(0.0, twist_damping))
+            quat = swing @ twist
+
     pose_bone.rotation_mode = "QUATERNION"
-    pose_bone.rotation_quaternion = local_rot.to_quaternion()
+    pose_bone.rotation_quaternion = quat
 
 
 def _torso_orientation_matrix(
@@ -191,22 +225,27 @@ def apply_pose(armature_obj: bpy.types.Object, landmarks: list[dict], initial_hi
                 delta.y * ROOT_TRANSLATION_SCALE_DEPTH,
                 delta.z * ROOT_TRANSLATION_SCALE_LATERAL,
             ))
-        if shoulders_visible:
-            hip_orientation = _torso_orientation_matrix(
-                hip_center, shoulder_center, lm("left_hip"), lm("right_hip")
-            )
-            if hip_orientation is not None:
-                _apply_full_rotation(hips_bone, hip_orientation, armature_obj)
-                bpy.context.view_layer.update()
+        # Pas de rotation sur "hips" : les cuisses en sont enfants dans le
+        # rig, et la moindre instabilité de la rotation du bassin se
+        # répercute en cascade sur le calcul des jambes (_aim_bone lit la
+        # matrice *courante* du parent). Le buste (spine) capte déjà
+        # l'essentiel de la torsion du corps ; le risque de régression sur
+        # les jambes ne vaut pas le gain ici.
 
     spine_bone = pose_bones.get("spine")
     if spine_bone is not None and hips_visible and shoulders_visible:
-        orientation = _torso_orientation_matrix(
-            hip_center, shoulder_center, lm("left_shoulder"), lm("right_shoulder")
-        )
-        if orientation is not None:
-            _apply_full_rotation(spine_bone, orientation, armature_obj)
-            bpy.context.view_layer.update()
+        # Retour au simple "aim" (direction bassin->épaules, sans torsion) :
+        # la version à 3 degrés de liberté (_torso_orientation_matrix,
+        # toujours définie plus haut) a produit plusieurs régressions
+        # (position anormale au neutre, rig qui part de travers) malgré
+        # plusieurs correctifs successifs, sans pouvoir être validée en
+        # conditions réelles. À reprendre plus tard avec plus de recul —
+        # potentiellement avec de meilleures données de profondeur
+        # (Phase 5, multi-caméra).
+        spine_dir = shoulder_center - hip_center
+        spine_dir.y *= SPINE_DEPTH_DAMPING
+        _aim_bone(spine_bone, spine_dir, armature_obj)
+        bpy.context.view_layer.update()
 
     for bone_name, start_name, end_name in LIMB_SEGMENTS:
         pose_bone = pose_bones.get(bone_name)
