@@ -60,6 +60,12 @@ ROOT_TRANSLATION_SCALE_DEPTH = 0.3    # Y (profondeur) — axe bruité
 # le Y (profondeur) étant l'axe le plus bruité en mono-caméra RGB.
 SPINE_DEPTH_DAMPING = 0.3
 
+# Même logique, appliquée à la direction de chaque membre (bras/jambe).
+# Jamais amortie jusqu'ici contrairement au bassin/buste/mains — un bruit
+# de profondeur sur epaule/coude/poignet peut suffire à faire pointer tout
+# le membre dans une direction très éloignée du mouvement réel.
+LIMB_DEPTH_DAMPING = 0.4
+
 # En dessous de ce seuil de confiance MediaPipe (0-1), un landmark est
 # considéré "non fiable" (souvent hors cadre) : le membre concerné est
 # gelé (on ne touche pas à sa rotation/position) plutôt que de suivre une
@@ -335,7 +341,9 @@ def apply_pose(
             continue
         if not (_visible(landmarks, start_name) and _visible(landmarks, end_name)):
             continue  # membre non fiable (souvent hors cadre) : on le gèle
-        _aim_bone(pose_bone, lm(end_name) - lm(start_name), armature_obj)
+        limb_dir = lm(end_name) - lm(start_name)
+        limb_dir.y *= LIMB_DEPTH_DAMPING
+        _aim_bone(pose_bone, limb_dir, armature_obj)
         bpy.context.view_layer.update()
 
     return hip_center
