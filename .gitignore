@@ -1,0 +1,16 @@
+# Environnement virtuel Python (recréé via README.md)
+capture_server/venv/
+
+# Modèles MediaPipe téléchargés (voir README.md pour les liens)
+capture_server/models/*.task
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# Artefact de build (zip de addon/, régénérable)
+CORPUS-MOCAP.zip
+
+# Blender
+*.blend1
+*.blend2
