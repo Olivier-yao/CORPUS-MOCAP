@@ -23,10 +23,12 @@ class _CaptureSession:
 
     instance: "_CaptureSession | None" = None
 
-    def __init__(self, armature, client, face_mesh=None):
+    def __init__(self, armature, client, face_mesh=None, bone_prefix="", bone_suffix=""):
         self.armature = armature
         self.client = client
         self.face_mesh = face_mesh
+        self.bone_prefix = bone_prefix
+        self.bone_suffix = bone_suffix
         self.timer = None
         self.initial_hip_center = None
         self.last_sent_stability = None
@@ -68,7 +70,7 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
         else:
             face_mesh = None
 
-        session = _CaptureSession(armature, client, face_mesh)
+        session = _CaptureSession(armature, client, face_mesh, settings.bone_prefix, settings.bone_suffix)
         session.timer = context.window_manager.event_timer_add(1.0 / 30.0, window=context.window)
         _CaptureSession.instance = session
 
@@ -113,19 +115,22 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
 
         frame = context.scene.frame_current
 
+        prefix, suffix = session.bone_prefix, session.bone_suffix
+
         if frame_msg is not None:
             hip_center = bone_mapping.apply_pose(
-                session.armature, frame_msg["landmarks"], session.initial_hip_center
+                session.armature, frame_msg["landmarks"], session.initial_hip_center, prefix, suffix
             )
             if session.initial_hip_center is None:
                 session.initial_hip_center = hip_center
 
-            hips_bone = session.armature.pose.bones.get("hips")
+            hips_bone_name = bone_mapping.resolve_bone_name("hips", prefix, suffix)
+            hips_bone = session.armature.pose.bones.get(hips_bone_name)
             if hips_bone is not None:
                 hips_bone.keyframe_insert(data_path="location", frame=frame)
 
-            for bone_name in bone_mapping.get_animated_bone_names():
-                if bone_name == "hips":
+            for bone_name in bone_mapping.get_animated_bone_names(prefix, suffix):
+                if bone_name == hips_bone_name:
                     continue
                 pose_bone = session.armature.pose.bones.get(bone_name)
                 if pose_bone is None:
@@ -135,8 +140,9 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
         if face_msg is not None:
             head_rotation = face_msg.get("head_rotation")
             if head_rotation is not None:
-                face_mapping.apply_head_rotation(session.armature, head_rotation)
-                head_bone = session.armature.pose.bones.get(face_mapping.HEAD_BONE_NAME)
+                face_mapping.apply_head_rotation(session.armature, head_rotation, prefix, suffix)
+                head_bone_name = bone_mapping.resolve_bone_name(face_mapping.HEAD_BONE_NAME, prefix, suffix)
+                head_bone = session.armature.pose.bones.get(head_bone_name)
                 if head_bone is not None:
                     head_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
 
@@ -156,8 +162,8 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
                 landmarks = hands.get(mp_side)
                 if landmarks is None:
                     continue
-                hand_mapping.apply_hand(session.armature, landmarks, side)
-                for bone_name in hand_mapping.get_animated_bone_names(side):
+                hand_mapping.apply_hand(session.armature, landmarks, side, prefix, suffix)
+                for bone_name in hand_mapping.get_animated_bone_names(side, prefix, suffix):
                     pose_bone = session.armature.pose.bones.get(bone_name)
                     if pose_bone is None:
                         continue

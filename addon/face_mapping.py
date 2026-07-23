@@ -24,6 +24,8 @@ from __future__ import annotations
 import bpy
 from mathutils import Matrix
 
+from .bone_mapping import resolve_bone_name
+
 HEAD_BONE_NAME = "head"
 
 # Change de repère MediaPipe (X droite, Y haut, Z vers la caméra/viewer) ->
@@ -39,7 +41,9 @@ _MP_TO_RIG = Matrix((
 ))
 
 
-def apply_head_rotation(armature_obj: bpy.types.Object, rotation_9: list[float] | None) -> None:
+def apply_head_rotation(
+    armature_obj: bpy.types.Object, rotation_9: list[float] | None, prefix: str = "", suffix: str = ""
+) -> None:
     """rotation_9 : sous-matrice de rotation 3x3 (9 floats, ligne par
     ligne) issue de facial_transformation_matrixes, exprimée dans un
     repère "monde" (X droite, Y devant soi, Z haut) une fois passée par
@@ -52,10 +56,12 @@ def apply_head_rotation(armature_obj: bpy.types.Object, rotation_9: list[float] 
     On convertit donc r_rig (repère monde) vers le repère local du bone
     par conjugaison avec son orientation de repos (même principe que
     _aim_bone dans bone_mapping.py, mais pour une rotation complète et
-    non une simple direction de visée)."""
+    non une simple direction de visée).
+
+    `prefix`/`suffix` : voir bone_mapping.resolve_bone_name."""
     if rotation_9 is None:
         return
-    pose_bone = armature_obj.pose.bones.get(HEAD_BONE_NAME)
+    pose_bone = armature_obj.pose.bones.get(resolve_bone_name(HEAD_BONE_NAME, prefix, suffix))
     if pose_bone is None:
         return
 

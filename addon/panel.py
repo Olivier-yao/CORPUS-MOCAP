@@ -17,6 +17,11 @@ class VIEW3D_PT_corpus_mocap(bpy.types.Panel):
         layout.prop(settings, "target_armature")
         layout.prop(settings, "target_face_mesh")
 
+        mapping_box = layout.box()
+        mapping_box.label(text="Mapping des os (optionnel)", icon="OUTLINER_DATA_ARMATURE")
+        mapping_box.prop(settings, "bone_prefix")
+        mapping_box.prop(settings, "bone_suffix")
+
         box = layout.box()
         box.label(text="Source : Webcam PC")
         row = box.row(align=True)

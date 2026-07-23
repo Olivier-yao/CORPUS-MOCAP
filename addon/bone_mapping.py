@@ -73,6 +73,15 @@ VISIBILITY_THRESHOLD = 0.5
 TORSO_TWIST_DAMPING = 0.5
 
 
+def resolve_bone_name(base_name: str, prefix: str = "", suffix: str = "") -> str:
+    """Applique le préfixe/suffixe configurable (cahier des charges §7)
+    au nom d'os attendu par convention, ex. resolve_bone_name("hips", "DEF-")
+    -> "DEF-hips" — pour les rigs auto-générés (ex. Rigify) dont les os
+    de déformation suivent un préfixe/suffixe cohérent mais différent de
+    notre convention par défaut."""
+    return f"{prefix}{base_name}{suffix}"
+
+
 def _visible(landmarks: list[dict], name: str) -> bool:
     return landmarks[LANDMARK_INDEX[name]]["visibility"] >= VISIBILITY_THRESHOLD
 
@@ -197,13 +206,25 @@ def _torso_orientation_matrix(
     ))
 
 
-def apply_pose(armature_obj: bpy.types.Object, landmarks: list[dict], initial_hip_center: Vector | None) -> Vector:
+def apply_pose(
+    armature_obj: bpy.types.Object,
+    landmarks: list[dict],
+    initial_hip_center: Vector | None,
+    prefix: str = "",
+    suffix: str = "",
+) -> Vector:
     """Applique une trame de landmarks sur `armature_obj`.
 
     Retourne le centre de bassin (espace rig) de cette trame ; l'appelant
     le repasse en `initial_hip_center` à l'appel suivant pour calculer une
-    translation relative du bassin (position de la 1ère trame = origine)."""
+    translation relative du bassin (position de la 1ère trame = origine).
+
+    `prefix`/`suffix` : voir resolve_bone_name — pour un rig dont les os
+    ne sont pas nommés exactement selon la convention par défaut."""
     pose_bones = armature_obj.pose.bones
+
+    def bone(name: str):
+        return pose_bones.get(resolve_bone_name(name, prefix, suffix))
 
     def lm(name: str) -> Vector:
         return _landmark_to_vector(landmarks[LANDMARK_INDEX[name]])
@@ -214,7 +235,7 @@ def apply_pose(armature_obj: bpy.types.Object, landmarks: list[dict], initial_hi
     hips_visible = _visible(landmarks, "left_hip") and _visible(landmarks, "right_hip")
     shoulders_visible = _visible(landmarks, "left_shoulder") and _visible(landmarks, "right_shoulder")
 
-    hips_bone = pose_bones.get("hips")
+    hips_bone = bone("hips")
     if hips_bone is not None and hips_visible:
         if initial_hip_center is None:
             hips_bone.location = Vector((0.0, 0.0, 0.0))
@@ -232,7 +253,7 @@ def apply_pose(armature_obj: bpy.types.Object, landmarks: list[dict], initial_hi
         # l'essentiel de la torsion du corps ; le risque de régression sur
         # les jambes ne vaut pas le gain ici.
 
-    spine_bone = pose_bones.get("spine")
+    spine_bone = bone("spine")
     if spine_bone is not None and hips_visible and shoulders_visible:
         # Retour au simple "aim" (direction bassin->épaules, sans torsion) :
         # la version à 3 degrés de liberté (_torso_orientation_matrix,
@@ -248,7 +269,7 @@ def apply_pose(armature_obj: bpy.types.Object, landmarks: list[dict], initial_hi
         bpy.context.view_layer.update()
 
     for bone_name, start_name, end_name in LIMB_SEGMENTS:
-        pose_bone = pose_bones.get(bone_name)
+        pose_bone = bone(bone_name)
         if pose_bone is None:
             continue
         if not (_visible(landmarks, start_name) and _visible(landmarks, end_name)):
@@ -259,8 +280,8 @@ def apply_pose(armature_obj: bpy.types.Object, landmarks: list[dict], initial_hi
     return hip_center
 
 
-def get_animated_bone_names() -> list[str]:
-    """Noms des os affectés par apply_pose, pour l'insertion de keyframes."""
+def get_animated_bone_names(prefix: str = "", suffix: str = "") -> list[str]:
+    """Noms résolus des os affectés par apply_pose, pour l'insertion de keyframes."""
     names = ["hips", "spine"]
     names.extend(bone_name for bone_name, _, _ in LIMB_SEGMENTS)
-    return names
+    return [resolve_bone_name(name, prefix, suffix) for name in names]

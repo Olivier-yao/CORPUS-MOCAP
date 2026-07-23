@@ -27,6 +27,23 @@ class MOCAP_Settings(bpy.types.PropertyGroup):
         subtype="FACTOR",
     )
 
+    bone_prefix: bpy.props.StringProperty(
+        name="Préfixe des os",
+        description=(
+            "Préfixé à chaque nom d'os attendu (ex: 'hips' -> 'DEF-hips'). "
+            "Utile pour un rig auto-généré (ex: Rigify utilise le préfixe 'DEF-' "
+            "sur ses os de déformation). Laisser vide si vos os sont nommés "
+            "exactement comme la convention CORPUS-MOCAP (voir tools/generate_test_rig.py)"
+        ),
+        default="",
+    )
+
+    bone_suffix: bpy.props.StringProperty(
+        name="Suffixe des os",
+        description="Suffixé à chaque nom d'os attendu (ex: 'hips' -> 'hips_deform')",
+        default="",
+    )
+
     host: bpy.props.StringProperty(
         name="Hôte",
         default="127.0.0.1",

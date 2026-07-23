@@ -113,21 +113,31 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
    ARKit pour être reconnu automatiquement). Les mains n'ont pas de
    sélecteur séparé : si l'armature cible a des bones de doigts nommés
    selon la convention (`thumb.01.L`, etc.), ils sont animés automatiquement.
-4. Ajuster **Stabilité** si besoin (léger = plus réactif, fort = plus lissé).
-5. Cliquer **● Enregistrer la performance** — la webcam s'active côté
+4. Si vos os ne sont pas nommés exactement `hips`, `spine`, `upper_arm.L`,
+   etc. (ex: un rig auto-généré type Rigify qui préfixe ses os de
+   déformation en `DEF-`), renseignez **Préfixe des os** / **Suffixe des
+   os** dans le panneau — ex. préfixe `DEF-` pour un rig où l'attente
+   `hips` correspond en réalité à `DEF-hips`. Si vos noms ne suivent
+   aucun préfixe/suffixe cohérent, il faut renommer les os pour
+   correspondre à la convention.
+5. Ajuster **Stabilité** si besoin (léger = plus réactif, fort = plus lissé).
+6. Cliquer **● Enregistrer la performance** — la webcam s'active côté
    `capture_server`, le rig, le visage et/ou les mains doivent suivre vos
    mouvements en temps réel.
-6. Cliquer à nouveau pour arrêter : une Action `CORPUS_MOCAP_Take` (corps +
+7. Cliquer à nouveau pour arrêter : une Action `CORPUS_MOCAP_Take` (corps +
    mains) et, si un mesh visage était sélectionné, `CORPUS_MOCAP_Face_Take`
    (sur le datablock Key du mesh) sont créées avec les keyframes de la
    prise, sur la même timeline.
 
 ## Limites connues
 
-- Mapping d'os en dur pour la convention de nommage de
-  `tools/generate_test_rig.py` (`addon/bone_mapping.py`). Un système de
-  mapping configurable par personnage viendra dans une itération
-  ultérieure (cahier des charges §7).
+- Mapping configurable (`bone_prefix`/`bone_suffix` dans le panneau) :
+  un seul préfixe/suffixe **global** appliqué à tous les noms d'os
+  attendus — couvre le cas d'un rig auto-généré avec une convention
+  cohérente (ex. Rigify `DEF-`), mais pas un remapping par bone
+  individuel. Si vos noms ne suivent aucun préfixe/suffixe cohérent, il
+  faut renommer les os pour correspondre à la convention par défaut de
+  `tools/generate_test_rig.py`.
 - Retargeting simplifié ("aim" sans gestion du twist/roll) : suffisant
   pour valider le concept, pas encore un rendu final.
 - **Le cadrage caméra doit couvrir tout le corps** (jusqu'aux pieds) pour
@@ -192,10 +202,11 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
 2. **Phase 2 — Visage** (blend shapes + rotation tête) : ✅ fait
    (torsion buste/bassin abandonnée, voir limites connues).
 3. **Mains/doigts** (MediaPipe Hand Landmarker, 21 points par main) :
-   ✅ implémenté, validation en conditions réelles en cours.
-4. **Système de mapping configurable** (noms de bones arbitraires, ex.
-   pour un rig Rigify `DEF-upper_arm.L` — cahier des charges §7) : pas
-   commencé, discuté comme prochaine priorité possible.
+   ✅ fait, y compris rotation du poignet (angle mort mono-caméra connu).
+4. **Système de mapping configurable** (préfixe/suffixe de noms de bones,
+   ex. pour un rig Rigify `DEF-upper_arm.L` — cahier des charges §7) :
+   ✅ fait (préfixe/suffixe global uniquement, pas de remapping par bone
+   individuel — voir limites connues).
 5. **Phase 3 — Stylisation cartoon** (post-traitement F-Curves : squash &
    stretch, amplification, timing) : pas commencé.
 6. **Phase 4 — Compagnon mobile** (un téléphone comme source, via

@@ -24,7 +24,7 @@ from __future__ import annotations
 import bpy
 from mathutils import Matrix, Vector
 
-from .bone_mapping import _aim_bone, _apply_full_rotation, _landmark_to_vector
+from .bone_mapping import _aim_bone, _apply_full_rotation, _landmark_to_vector, resolve_bone_name
 
 # (nom du doigt, indices des 4 landmarks de sa chaîne : base, 2 jointures, bout)
 FINGER_LANDMARKS = [
@@ -72,15 +72,21 @@ def _hand_orientation_matrix(wrist: Vector, middle_mcp: Vector, index_mcp: Vecto
     ))
 
 
-def apply_hand(armature_obj: bpy.types.Object, landmarks: list[dict], side: str) -> None:
+def apply_hand(
+    armature_obj: bpy.types.Object, landmarks: list[dict], side: str, prefix: str = "", suffix: str = ""
+) -> None:
     """side : "L" ou "R". landmarks : 21 dicts {x, y, z} d'une main
-    MediaPipe (coordonnées normalisées, même convention que le corps)."""
+    MediaPipe (coordonnées normalisées, même convention que le corps).
+    `prefix`/`suffix` : voir bone_mapping.resolve_bone_name."""
     pose_bones = armature_obj.pose.bones
 
     def lm(i: int) -> Vector:
         return _landmark_to_vector(landmarks[i])
 
-    hand_bone = pose_bones.get(f"hand.{side}")
+    def bone(name: str):
+        return pose_bones.get(resolve_bone_name(name, prefix, suffix))
+
+    hand_bone = bone(f"hand.{side}")
     if hand_bone is not None:
         orientation = _hand_orientation_matrix(lm(WRIST), lm(MIDDLE_MCP), lm(INDEX_MCP), lm(PINKY_MCP))
         if orientation is not None:
@@ -89,8 +95,7 @@ def apply_hand(armature_obj: bpy.types.Object, landmarks: list[dict], side: str)
 
     for finger_name, indices in FINGER_LANDMARKS:
         for seg_index in range(3):
-            bone_name = f"{finger_name}.{seg_index + 1:02d}.{side}"
-            pose_bone = pose_bones.get(bone_name)
+            pose_bone = bone(f"{finger_name}.{seg_index + 1:02d}.{side}")
             if pose_bone is None:
                 continue
             start = lm(indices[seg_index])
@@ -99,11 +104,11 @@ def apply_hand(armature_obj: bpy.types.Object, landmarks: list[dict], side: str)
             bpy.context.view_layer.update()
 
 
-def get_animated_bone_names(side: str) -> list[str]:
-    """Noms des bones (poignet + doigts) affectés par apply_hand pour un
-    côté donné ("L" ou "R"), pour l'insertion de keyframes."""
+def get_animated_bone_names(side: str, prefix: str = "", suffix: str = "") -> list[str]:
+    """Noms résolus des bones (poignet + doigts) affectés par apply_hand
+    pour un côté donné ("L" ou "R"), pour l'insertion de keyframes."""
     names = [f"hand.{side}"]
     for finger_name, _ in FINGER_LANDMARKS:
         for seg_index in range(1, 4):
             names.append(f"{finger_name}.{seg_index:02d}.{side}")
-    return names
+    return [resolve_bone_name(name, prefix, suffix) for name in names]
