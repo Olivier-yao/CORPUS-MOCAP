@@ -280,7 +280,15 @@ Trois options, selon votre cas :
   clic") pour bénéficier du sous-ensemble piloté. `jaw`/`brow.in/out.L/R`
   volontairement exclus des shape keys générées par "Générer un
   personnage de base" (pas de double animation de la même zone par deux
-  mécanismes) — à revalider en conditions réelles.
+  mécanismes) — à revalider en conditions réelles. Les 23 bones de
+  contrôle non pilotés sont créés avec **`use_deform` désactivé**
+  (`character_builder.FACE_CONTROL_ONLY_BONES`) : sans zone de mesh qui
+  leur soit propre, Blender échoue systématiquement à leur trouver une
+  solution lors du "Armature Deform with Automatic Weights" (message
+  "Bone Heat Weighting: failed to find solution for one or more bones")
+  — les désactiver les fait ignorer par ce calcul. Réactivable à la main
+  (Bone Properties > Deform) sur un bone si vous voulez l'utiliser pour
+  déformer votre mesh.
 - **Rig calé sur un modèle** (direct ou en 2 étapes via points de repère)
   : la mise à l'échelle (`character_builder.compute_fit_transform`) est
   une approximation grossière basée uniquement sur la hauteur (boîte

@@ -267,6 +267,22 @@ FACE_BONE_JOINTS = [
     ("ear.R",            "ear.R",          "ear_end.R",            "head", False),
 ]
 
+# Bones faciaux effectivement pilotés par la capture (voir
+# addon/face_mapping.py) — tous les autres bones de FACE_BONE_JOINTS
+# (chin, eye.*, lid.*, brow.mid.*, nose*, cheek.*, mouth.corner.*, lip.*,
+# ear.*) sont de purs bones de contrôle, pas encore animés par MediaPipe.
+DRIVEN_FACE_BONES = {"head", "jaw", "brow.in.L", "brow.in.R", "brow.out.L", "brow.out.R"}
+
+# Bones de contrôle sans géométrie de mesh clairement associée : marqués
+# use_deform=False à la création (voir _build_armature) pour que Blender
+# les ignore lors du "Armature Deform with Automatic Weights" — sinon le
+# solveur de heat weighting échoue systématiquement dessus ("Bone Heat
+# Weighting: failed to find solution for one or more bones") puisqu'ils
+# n'ont aucune zone de mesh qui leur soit propre. L'utilisateur peut
+# réactiver use_deform à la main (Bone Properties > Deform) sur l'un
+# d'eux s'il veut l'utiliser pour déformer son mesh.
+FACE_CONTROL_ONLY_BONES = {name for name, *_ in FACE_BONE_JOINTS if name not in DRIVEN_FACE_BONES}
+
 # (nom du bone, rayon du cylindre) — géométrie du corps (bouton "Générer
 # un personnage de base" uniquement). Les bones absents de cette table
 # (doigts, tous les bones faciaux) n'ont pas de géométrie propre : les
@@ -522,6 +538,8 @@ def _build_armature(joint_positions: dict | None = None, scale: float = 1.0, off
         if parent_name:
             eb.parent = edit_bones[parent_name]
             eb.use_connect = connected
+        if name in FACE_CONTROL_ONLY_BONES:
+            eb.use_deform = False
     bpy.ops.object.mode_set(mode="OBJECT")
 
     return rig_obj
