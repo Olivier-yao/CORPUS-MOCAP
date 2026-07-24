@@ -108,6 +108,7 @@ def resolve_bone_name(base_name: str, prefix: str = "", suffix: str = "") -> str
 _ROLE_BASE_TRANSLATIONS = {
     "hips": ("Bassin", False),
     "spine": ("Colonne / buste", True),
+    "shoulder": ("Épaule", True),
     "upper_arm": ("Bras (haut)", False),
     "forearm": ("Avant-bras", False),
     "thigh": ("Cuisse", True),
@@ -122,6 +123,43 @@ _ROLE_BASE_TRANSLATIONS = {
 }
 _ROLE_SEGMENT_TRANSLATIONS = {"01": "base", "02": "milieu", "03": "bout"}
 
+# Traductions par correspondance de nom COMPLET (vérifiées en priorité
+# dans translate_role_name, avant la logique générique par parties
+# ci-dessous) — pour les os faciaux (addon/face_mapping.py,
+# addon/character_builder.py) dont la structure du nom ("jaw", "lid.T.L",
+# "brow.in.L", "nose.tip", "mouth.corner.L"...) ne suit pas le schéma
+# générique <base>.<segment 01/02/03>.<L/R> des membres/doigts.
+_FACE_ROLE_TRANSLATIONS = {
+    "jaw": "Mâchoire",
+    "chin": "Menton",
+    "eye.L": "Œil gauche",
+    "eye.R": "Œil droit",
+    "lid.T.L": "Paupière haute gauche",
+    "lid.B.L": "Paupière basse gauche",
+    "lid.T.R": "Paupière haute droite",
+    "lid.B.R": "Paupière basse droite",
+    "brow.in.L": "Sourcil interne gauche",
+    "brow.mid.L": "Sourcil milieu gauche",
+    "brow.out.L": "Sourcil externe gauche",
+    "brow.in.R": "Sourcil interne droit",
+    "brow.mid.R": "Sourcil milieu droit",
+    "brow.out.R": "Sourcil externe droit",
+    "nose": "Nez (arête)",
+    "nose.tip": "Bout du nez",
+    "cheek.L": "Joue gauche",
+    "cheek.R": "Joue droite",
+    "mouth.corner.L": "Coin de bouche gauche",
+    "mouth.corner.R": "Coin de bouche droit",
+    "lip.T": "Lèvre supérieure (centre)",
+    "lip.T.L": "Lèvre supérieure gauche",
+    "lip.T.R": "Lèvre supérieure droite",
+    "lip.B": "Lèvre inférieure (centre)",
+    "lip.B.L": "Lèvre inférieure gauche",
+    "lip.B.R": "Lèvre inférieure droite",
+    "ear.L": "Oreille gauche",
+    "ear.R": "Oreille droite",
+}
+
 
 def _side_label(side_code: str, feminine: bool) -> str:
     if side_code == "L":
@@ -135,6 +173,8 @@ def translate_role_name(role: str) -> str:
     """Traduction française indicative d'un nom d'os canonique, ex.
     "thumb.01.L" -> "Pouce gauche - base". Purement informatif (affichage),
     ne remplace pas le nom anglais utilisé pour la recherche/le mapping."""
+    if role in _FACE_ROLE_TRANSLATIONS:
+        return _FACE_ROLE_TRANSLATIONS[role]
     parts = role.split(".")
     label, feminine = _ROLE_BASE_TRANSLATIONS.get(parts[0], (parts[0], False))
     if len(parts) == 1:
