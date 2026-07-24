@@ -115,11 +115,12 @@ Trois options, selon votre cas :
     automatiquement, voir Limites connues). Une fois terminé (ou arrêté
     en cours de route), bouton **"2. Construire le rig"** — génère
     l'armature à partir de la position actuelle de chaque point (position
-    canonique approximative pour tout point non encore placé). Les points
-    restent dans la collection `CORPUS_MOCAP_RigPoints` (Outliner) après
-    coup, à supprimer une fois le rig construit si vous n'en avez plus
-    besoin. Relancer "1. Points de repère" supprime et recrée tout le jeu
-    de points (perd tout déplacement déjà fait).
+    canonique approximative pour tout point non encore placé), puis
+    **masque automatiquement** la collection `CORPUS_MOCAP_RigPoints`
+    dans la vue 3D (leur rôle est terminé) — réaffichable via l'icône œil
+    dans l'Outliner si vous voulez ajuster un point et reconstruire.
+    Relancer "1. Points de repère" supprime et recrée tout le jeu de
+    points (perd tout déplacement déjà fait).
 
   Les deux inclus un set de bones faciaux "intermédiaire" (~28 os : yeux,
   paupières, sourcils en 3 points par côté, nez, joues, mâchoire, menton,

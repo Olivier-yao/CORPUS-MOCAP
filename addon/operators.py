@@ -692,7 +692,11 @@ class MOCAP_OT_build_rig_from_points(bpy.types.Operator):
     des points générés par "Générer les points de repère" — à utiliser
     après les avoir repositionnés, pas juste après les avoir générés. Ne
     touche à aucun mesh (skinnage manuel séparé, comme
-    "Générer un rig pour le modèle sélectionné")."""
+    "Générer un rig pour le modèle sélectionné"). Masque automatiquement
+    la collection de points dans la vue 3D une fois le rig construit
+    (leur rôle est terminé) — réaffichable via l'icône œil dans
+    l'Outliner (collection "CORPUS_MOCAP_RigPoints") si vous voulez
+    ajuster un point et reconstruire."""
 
     bl_idname = "mocap.build_rig_from_points"
     bl_label = "Construire le rig depuis les points"
@@ -715,10 +719,15 @@ class MOCAP_OT_build_rig_from_points(bpy.types.Operator):
         settings = context.scene.corpus_mocap
         settings.target_armature = armature_obj
 
+        points_collection = bpy.data.collections.get(character_builder.POINTS_COLLECTION_NAME)
+        if points_collection is not None:
+            points_collection.hide_viewport = True
+
         self.report(
             {'INFO'},
             f"Rig '{armature_obj.name}' construit depuis les points de repère "
-            "— skinnez le mesh vous-même (Parent > Armature Deform).",
+            "(points masqués, réaffichables dans l'Outliner) — skinnez le mesh "
+            "vous-même (Parent > Armature Deform).",
         )
         return {'FINISHED'}
 
