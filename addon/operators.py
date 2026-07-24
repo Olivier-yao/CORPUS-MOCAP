@@ -452,19 +452,25 @@ class MOCAP_OT_generate_rig_for_mesh(bpy.types.Operator):
 
 class MOCAP_OT_generate_reference_points(bpy.types.Operator):
     """Étape 1/2 d'une alternative à "Générer un rig pour le modèle
-    sélectionné" : crée un petit point (Empty) par articulation attendue
-    (yeux, coudes, coins de bouche, etc.), calé sur la taille du mesh
-    actif — même approximation grossière que le bouton rig direct. Plus
-    simple à positionner précisément qu'un bone en Edit Mode : activez le
-    Snap to Vertex de Blender (aimant en haut de la Vue 3D, mode Vertex)
-    puis déplacez (G) chaque point pour le coller exactement sur la
-    surface de votre modèle. Une fois tous les points ajustés, utilisez
-    "Construire le rig depuis les points" pour générer l'armature à
-    partir de leur position actuelle. Les points sont regroupés dans la
-    collection "CORPUS_MOCAP_RigPoints" (Outliner) — supprimez-les une
-    fois le rig construit si vous n'en avez plus besoin. Ré-exécuter ce
-    bouton supprime et recrée tous les points (perd tout déplacement déjà
-    fait). N'inclut pas les doigts (voir addon/character_builder.py)."""
+    sélectionné" : place les points de repère UN PAR UN (pas tous en même
+    temps — trop de cercles superposés, surtout sur le visage, rendent
+    impossible de savoir lequel est lequel). Le nom de l'articulation à
+    positionner s'affiche dans la barre de statut en bas de la fenêtre à
+    chaque étape. Activez le Snap to Vertex de Blender (aimant en haut de
+    la Vue 3D, mode Vertex) puis déplacez (G) le point actif pour le
+    coller exactement sur la surface de votre modèle, puis Entrée pour
+    valider et passer au point suivant. S pour passer un point sans le
+    déplacer (reste à sa position approximative). Echap pour arrêter :
+    les points déjà placés sont conservés, les suivants ne sont pas créés
+    (positions canoniques utilisées automatiquement si vous lancez
+    "Construire le rig depuis les points" sans les avoir tous faits).
+    Une fois terminé, utilisez "Construire le rig depuis les points".
+    Les points sont regroupés dans la collection "CORPUS_MOCAP_RigPoints"
+    (Outliner) — supprimez-les une fois le rig construit si vous n'en
+    avez plus besoin. Ré-exécuter ce bouton supprime et recrée tout le
+    jeu de points (perd tout déplacement déjà fait). N'inclut pas les
+    doigts, et pas les articulations "secondaires" sans signification
+    anatomique propre — voir addon/character_builder.py."""
 
     bl_idname = "mocap.generate_reference_points"
     bl_label = "Générer les points de repère"
@@ -474,16 +480,59 @@ class MOCAP_OT_generate_reference_points(bpy.types.Operator):
     def poll(cls, context):
         return context.active_object is not None and context.active_object.type == 'MESH'
 
-    def execute(self, context):
+    def invoke(self, context, event):
         mesh_obj = context.active_object
-        character_builder.generate_reference_points(mesh_obj)
-        self.report(
-            {'INFO'},
-            "Points de repère générés (collection 'CORPUS_MOCAP_RigPoints') — "
-            "déplacez-les (Snap to Vertex) sur les articulations réelles de "
-            "votre modèle, puis \"Construire le rig depuis les points\".",
+        self._scale, self._offset = character_builder.compute_fit_transform(mesh_obj)
+        self._joints = character_builder.primary_joint_names()
+        self._index = 0
+        character_builder.clear_reference_points()
+        self._create_current_point(context)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _create_current_point(self, context):
+        joint_name = self._joints[self._index]
+        point_obj = character_builder.create_reference_point(joint_name, self._scale, self._offset)
+        bpy.ops.object.select_all(action='DESELECT')
+        point_obj.select_set(True)
+        context.view_layer.objects.active = point_obj
+        self._update_status(context)
+
+    def _update_status(self, context):
+        joint_name = self._joints[self._index]
+        translation = character_builder.translate_joint_name(joint_name)
+        context.workspace.status_text_set(
+            f"CORPUS-MOCAP [{self._index + 1}/{len(self._joints)}] positionnez le point pour "
+            f"\"{joint_name}\" ({translation}) — G pour déplacer (Snap to Vertex conseillé), "
+            f"puis Entrée pour valider  |  S : passer  |  Echap : arrêter"
         )
-        return {'FINISHED'}
+
+    def _advance(self, context):
+        self._index += 1
+        if self._index >= len(self._joints):
+            context.workspace.status_text_set(None)
+            self.report(
+                {'INFO'},
+                f"Terminé : {len(self._joints)} points placés — utilisez maintenant "
+                "\"Construire le rig depuis les points\".",
+            )
+            return {'FINISHED'}
+        self._create_current_point(context)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            context.workspace.status_text_set(None)
+            self.report({'INFO'}, f"Arrêté : {self._index}/{len(self._joints)} points placés")
+            return {'CANCELLED'}
+
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            return self._advance(context)
+
+        if event.type == 'S' and event.value == 'PRESS':
+            return self._advance(context)
+
+        return {'PASS_THROUGH'}
 
 
 class MOCAP_OT_build_rig_from_points(bpy.types.Operator):

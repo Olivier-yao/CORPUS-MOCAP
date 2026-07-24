@@ -12,19 +12,25 @@
    Rigify, l'utilisateur doit ensuite repositionner chaque bone à la main
    (Edit Mode) pour l'aligner précisément sur les articulations réelles
    de son modèle.
-3. `generate_reference_points(mesh_obj)` + `build_rig_from_points()` :
-   variante en 2 étapes de l'option 2, pour un positionnement plus précis
-   sans manipuler des bones directement. Étape 1 crée un petit Empty par
-   articulation (voir JOINTS), calé sur la taille du mesh comme
-   generate_rig_for_mesh. L'utilisateur déplace ensuite chaque point
-   individuellement (activer le Snap to Vertex de Blender pour les coller
+3. `create_reference_point(...)` + `build_rig_from_points()` : variante
+   en 2 étapes de l'option 2, pour un positionnement plus précis sans
+   manipuler des bones directement. Étape 1 (pilotée par le modal
+   MOCAP_OT_generate_reference_points dans operators.py, PAS par ce
+   module directement) crée les points UN PAR UN — pas tous en même
+   temps, sinon ~78 petits cercles superposés sur le visage sont
+   illisibles (retour utilisateur direct sur une première version qui
+   les créait tous d'un coup). Seuls les joints "primaires" sont proposés
+   (voir primary_joint_names) : les joints "secondaires" (bout d'un bone
+   de contrôle sans signification anatomique propre) sont dérivés
+   automatiquement, jamais positionnés à la main. L'utilisateur déplace
+   chaque point (activer le Snap to Vertex de Blender pour le coller
    exactement sur la surface du modèle — yeux, coudes, coins de bouche,
    etc., beaucoup plus simple à manipuler en Object Mode qu'un bone en
-   Edit Mode). Étape 2 (`build_rig_from_points`) lit la position ACTUELLE
-   de chaque point et construit l'armature à partir de ces positions —
-   voir MOCAP_OT_generate_reference_points / MOCAP_OT_build_rig_from_points.
-   Ce module ne détecte lui-même aucun point sur le mesh : le
-   positionnement précis reste entièrement manuel dans les trois cas.
+   Edit Mode) puis valide pour passer au suivant. Étape 2
+   (`build_rig_from_points`) lit la position ACTUELLE de chaque point et
+   construit l'armature à partir de ces positions. Ce module ne détecte
+   lui-même aucun point sur le mesh : le positionnement précis reste
+   entièrement manuel dans les trois cas.
 
 Dans tous les cas, les bones sont nommés selon la convention attendue
 par le mapping de capture — voir addon/bone_mapping.py (corps),
@@ -292,13 +298,109 @@ FACE_SHAPE_KEYS = [
     ("cheekPuff",        (0.0, -0.05, 1.62), 0.08, (0.0, -0.015, 0.0)),
 ]
 
-# Points de repère déplaçables (generate_reference_points/
+# Points de repère déplaçables (create_reference_point/
 # build_rig_from_points) : préfixe de nom d'objet, taille d'affichage, et
 # nom de la Collection Blender qui les regroupe (pour les sélectionner/
 # masquer/supprimer en bloc facilement depuis l'Outliner).
 POINT_NAME_PREFIX = "CMP_pt."
 POINT_DISPLAY_SIZE = 0.012
 POINTS_COLLECTION_NAME = "CORPUS_MOCAP_RigPoints"
+
+# Traduction française indicative de chaque nom de joint (voir
+# translate_joint_name) — affichée dans la barre de statut du flux
+# interactif pour clarifier quelle articulation positionner.
+JOINT_TRANSLATIONS: dict[str, str] = {
+    "root": "Racine (bassin)",
+    "hips_top": "Sommet du bassin",
+    "chest_base": "Base du torse",
+    "neck_base": "Base du cou",
+    "head_base": "Base de la tête",
+    "head_top": "Sommet de la tête",
+
+    "clavicle_in.L": "Clavicule interne gauche",
+    "shoulder.L": "Épaule gauche",
+    "elbow.L": "Coude gauche",
+    "wrist.L": "Poignet gauche",
+    "hand_tip.L": "Bout de la main gauche",
+    "clavicle_in.R": "Clavicule interne droite",
+    "shoulder.R": "Épaule droite",
+    "elbow.R": "Coude droit",
+    "wrist.R": "Poignet droit",
+    "hand_tip.R": "Bout de la main droite",
+
+    "hip.L": "Hanche gauche",
+    "knee.L": "Genou gauche",
+    "ankle.L": "Cheville gauche",
+    "foot_tip.L": "Bout du pied gauche",
+    "hip.R": "Hanche droite",
+    "knee.R": "Genou droit",
+    "ankle.R": "Cheville droite",
+    "foot_tip.R": "Bout du pied droit",
+
+    "jaw_hinge": "Articulation de la mâchoire",
+    "chin_top": "Haut du menton",
+    "chin_tip": "Bout du menton",
+
+    "eye.L": "Œil gauche",
+    "eye_socket.L": "Fond de l'orbite gauche",
+    "eye.R": "Œil droit",
+    "eye_socket.R": "Fond de l'orbite droite",
+
+    "lid_T.L": "Paupière haute gauche",
+    "lid_T_end.L": "Paupière haute gauche (extrémité)",
+    "lid_B.L": "Paupière basse gauche",
+    "lid_B_end.L": "Paupière basse gauche (extrémité)",
+    "lid_T.R": "Paupière haute droite",
+    "lid_T_end.R": "Paupière haute droite (extrémité)",
+    "lid_B.R": "Paupière basse droite",
+    "lid_B_end.R": "Paupière basse droite (extrémité)",
+
+    "brow_in.L": "Sourcil interne gauche",
+    "brow_in_end.L": "Sourcil interne gauche (extrémité)",
+    "brow_mid.L": "Sourcil milieu gauche",
+    "brow_mid_end.L": "Sourcil milieu gauche (extrémité)",
+    "brow_out.L": "Sourcil externe gauche",
+    "brow_out_end.L": "Sourcil externe gauche (extrémité)",
+    "brow_in.R": "Sourcil interne droit",
+    "brow_in_end.R": "Sourcil interne droit (extrémité)",
+    "brow_mid.R": "Sourcil milieu droit",
+    "brow_mid_end.R": "Sourcil milieu droit (extrémité)",
+    "brow_out.R": "Sourcil externe droit",
+    "brow_out_end.R": "Sourcil externe droit (extrémité)",
+
+    "nose_bridge": "Arête du nez",
+    "nose_tip": "Bout du nez",
+    "nose_tip_end": "Bout du nez (extrémité)",
+
+    "cheek.L": "Joue gauche",
+    "cheek_end.L": "Joue gauche (extrémité)",
+    "cheek.R": "Joue droite",
+    "cheek_end.R": "Joue droite (extrémité)",
+
+    "mouth_corner.L": "Coin de bouche gauche",
+    "mouth_corner_end.L": "Coin de bouche gauche (extrémité)",
+    "mouth_corner.R": "Coin de bouche droit",
+    "mouth_corner_end.R": "Coin de bouche droit (extrémité)",
+
+    "lip_T_center": "Lèvre supérieure (centre)",
+    "lip_T_center_end": "Lèvre supérieure (centre, extrémité)",
+    "lip_T.L": "Lèvre supérieure gauche",
+    "lip_T_end.L": "Lèvre supérieure gauche (extrémité)",
+    "lip_T.R": "Lèvre supérieure droite",
+    "lip_T_end.R": "Lèvre supérieure droite (extrémité)",
+
+    "lip_B_center": "Lèvre inférieure (centre)",
+    "lip_B_center_end": "Lèvre inférieure (centre, extrémité)",
+    "lip_B.L": "Lèvre inférieure gauche",
+    "lip_B_end.L": "Lèvre inférieure gauche (extrémité)",
+    "lip_B.R": "Lèvre inférieure droite",
+    "lip_B_end.R": "Lèvre inférieure droite (extrémité)",
+
+    "ear.L": "Oreille gauche",
+    "ear_end.L": "Oreille gauche (extrémité)",
+    "ear.R": "Oreille droite",
+    "ear_end.R": "Oreille droite (extrémité)",
+}
 
 
 def _smoothstep(t: float) -> float:
@@ -534,7 +636,52 @@ def generate_rig_for_mesh(mesh_obj: bpy.types.Object) -> bpy.types.Object:
     return _build_armature(scale=scale, offset=offset)
 
 
-def _remove_points_collection() -> None:
+def _joint_head_tail_sets() -> tuple[set, set]:
+    heads, tails = set(), set()
+    for bone_defs in (BODY_BONE_JOINTS, FACE_BONE_JOINTS):
+        for _name, head_j, tail_j, _parent, _connected in bone_defs:
+            heads.add(head_j)
+            tails.add(tail_j)
+    return heads, tails
+
+
+def _secondary_joint_offsets() -> dict[str, tuple[str, tuple[float, float, float]]]:
+    """Joints qui ne sont QUE la queue d'un bone, jamais la tête d'un
+    autre (bout d'un bone de contrôle court sans réelle signification
+    anatomique propre, ex. "hand_tip.L" ou "eye_socket.L") : leur position
+    est dérivée automatiquement (tête du bone + décalage canonique
+    tête->queue) plutôt que proposée individuellement dans le flux
+    interactif de points de repère — sinon, positionner ~78 points un par
+    un pour un simple visage est ingérable ; voir primary_joint_names."""
+    heads, tails = _joint_head_tail_sets()
+    secondary = tails - heads
+    offsets: dict[str, tuple[str, tuple[float, float, float]]] = {}
+    for bone_defs in (BODY_BONE_JOINTS, FACE_BONE_JOINTS):
+        for _name, head_j, tail_j, _parent, _connected in bone_defs:
+            if tail_j in secondary and tail_j not in offsets:
+                offset = Vector(JOINTS[tail_j]) - Vector(JOINTS[head_j])
+                offsets[tail_j] = (head_j, tuple(offset))
+    return offsets
+
+
+def primary_joint_names() -> list[str]:
+    """Articulations proposées une par une (dans l'ordre de JOINTS —
+    corps puis visage) par le flux interactif "Générer les points de
+    repère" — toutes sauf les queues de bones "orphelines" sans
+    signification anatomique propre (voir _secondary_joint_offsets)."""
+    secondary = set(_secondary_joint_offsets())
+    return [name for name in JOINTS if name not in secondary]
+
+
+def translate_joint_name(joint_name: str) -> str:
+    """Traduction française indicative d'un nom de joint (affichage dans
+    la barre de statut du flux interactif), ex. "wrist.L" -> "Poignet
+    gauche". Purement informatif, ne remplace pas le nom utilisé en
+    interne. Retourne le nom tel quel si absent de JOINT_TRANSLATIONS."""
+    return JOINT_TRANSLATIONS.get(joint_name, joint_name)
+
+
+def clear_reference_points() -> None:
     coll = bpy.data.collections.get(POINTS_COLLECTION_NAME)
     if coll is None:
         return
@@ -543,41 +690,41 @@ def _remove_points_collection() -> None:
     bpy.data.collections.remove(coll)
 
 
-def generate_reference_points(mesh_obj: bpy.types.Object) -> bpy.types.Collection:
-    """Étape 1 du flux en 2 temps (voir docstring du module) : crée un
-    petit Empty par articulation de JOINTS, nommé f"{POINT_NAME_PREFIX}
-    {nom_du_joint}", regroupés dans la Collection POINTS_COLLECTION_NAME.
-    Position initiale = même échelle/décalage que generate_rig_for_mesh
-    (approximation grossière, à corriger à la main). Ré-exécuter supprime
-    et recrée tout le jeu de points (perd tout déplacement déjà fait).
-    Ne crée PAS de points pour les doigts (voir docstring du module).
-    Retourne la Collection créée."""
-    _remove_points_collection()
-    scale, offset = compute_fit_transform(mesh_obj)
+def create_reference_point(joint_name: str, scale: float, offset: Vector) -> bpy.types.Object:
+    """Crée (ou recrée si déjà présent) le point de repère d'une seule
+    articulation, positionné à sa coordonnée canonique mise à l'échelle —
+    utilisé un par un par MOCAP_OT_generate_reference_points (flux
+    interactif, voir operators.py) plutôt que tous en même temps, pour
+    rester lisible dans la vue 3D (voir docstring du module)."""
+    existing = bpy.data.objects.get(f"{POINT_NAME_PREFIX}{joint_name}")
+    if existing is not None:
+        bpy.data.objects.remove(existing, do_unlink=True)
 
-    coll = bpy.data.collections.new(POINTS_COLLECTION_NAME)
-    bpy.context.scene.collection.children.link(coll)
+    coll = bpy.data.collections.get(POINTS_COLLECTION_NAME)
+    if coll is None:
+        coll = bpy.data.collections.new(POINTS_COLLECTION_NAME)
+        bpy.context.scene.collection.children.link(coll)
 
-    for joint_name, pos in JOINTS.items():
-        point_obj = bpy.data.objects.new(f"{POINT_NAME_PREFIX}{joint_name}", None)
-        point_obj.empty_display_type = "SPHERE"
-        point_obj.empty_display_size = POINT_DISPLAY_SIZE
-        point_obj.location = Vector(pos) * scale + offset
-        coll.objects.link(point_obj)
-
-    return coll
+    point_obj = bpy.data.objects.new(f"{POINT_NAME_PREFIX}{joint_name}", None)
+    point_obj.empty_display_type = "SPHERE"
+    point_obj.empty_display_size = POINT_DISPLAY_SIZE
+    point_obj.location = Vector(JOINTS[joint_name]) * scale + offset
+    coll.objects.link(point_obj)
+    return point_obj
 
 
 def build_rig_from_points() -> bpy.types.Object:
     """Étape 2 du flux en 2 temps : construit l'armature en lisant la
     position ACTUELLE (après ajustement manuel par l'utilisateur) de
-    chaque Empty créé par generate_reference_points — donc à appeler
+    chaque point "primaire" créé par le flux interactif (voir
+    primary_joint_names), puis dérive les joints "secondaires" à partir
+    de ces positions (voir _secondary_joint_offsets) — donc à appeler
     après avoir repositionné les points, pas juste après les avoir
-    générés. Un point renommé/supprimé retombe silencieusement sur sa
-    position canonique (JOINTS), avec un print d'avertissement listant
-    les joints concernés plutôt qu'un crash. Lève RuntimeError si aucun
-    point n'existe (generate_reference_points jamais appelé). Ne touche
-    à aucun mesh. Retourne l'armature créée."""
+    générés. Un point primaire manquant (jamais placé — flux arrêté tôt
+    via Echap — ou supprimé) retombe silencieusement sur sa position
+    canonique (JOINTS), avec un print d'avertissement listant les joints
+    concernés plutôt qu'un crash. Lève RuntimeError si aucun point
+    n'existe. Ne touche à aucun mesh. Retourne l'armature créée."""
     coll = bpy.data.collections.get(POINTS_COLLECTION_NAME)
     if coll is None:
         raise RuntimeError(
@@ -587,12 +734,16 @@ def build_rig_from_points() -> bpy.types.Object:
 
     joint_positions = dict(JOINTS)
     missing = []
-    for joint_name in JOINTS:
+    for joint_name in primary_joint_names():
         point_obj = bpy.data.objects.get(f"{POINT_NAME_PREFIX}{joint_name}")
         if point_obj is None:
             missing.append(joint_name)
             continue
         joint_positions[joint_name] = tuple(point_obj.location)
+
+    for secondary_name, (head_joint, rel_offset) in _secondary_joint_offsets().items():
+        head_pos = Vector(joint_positions[head_joint])
+        joint_positions[secondary_name] = tuple(head_pos + Vector(rel_offset))
 
     if missing:
         print(

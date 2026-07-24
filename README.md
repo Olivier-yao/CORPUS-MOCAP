@@ -94,18 +94,26 @@ Trois options, selon votre cas :
     c'est une base approximative : repositionnez ensuite chaque os à la
     main (Edit Mode) sur les articulations réelles de votre modèle (yeux,
     coins de bouche, coudes, etc.).
-  - **En 2 étapes, plus précis** : bouton **"1. Points de repère"** — crée
-    un petit point (Empty) par articulation, calé sur la taille du mesh
-    (même approximation que ci-dessus). Activez le **Snap to Vertex** de
-    Blender (aimant en haut de la Vue 3D, mode Vertex) et déplacez (`G`)
-    chaque point pour le coller exactement sur la surface de votre modèle
-    — bien plus simple à positionner précisément qu'un bone en Edit Mode.
-    Une fois tous les points ajustés, bouton **"2. Construire le rig"** —
-    génère l'armature à partir de la position actuelle de chaque point.
-    Les points restent dans la collection `CORPUS_MOCAP_RigPoints`
-    (Outliner) après coup, à supprimer une fois le rig construit si vous
-    n'en avez plus besoin. Ré-exécuter "1. Points de repère" supprime et
-    recrée tous les points (perd tout déplacement déjà fait).
+  - **En 2 étapes, plus précis** : bouton **"1. Points de repère"** —
+    outil interactif qui place les points **un par un** (pas tous en même
+    temps : trop de cercles superposés, surtout sur le visage, rendent
+    impossible de savoir lequel est lequel). Le nom de l'articulation à
+    positionner (ex. "Poignet gauche") s'affiche dans la barre de statut
+    en bas de la fenêtre à chaque étape. Pour chaque point : activez le
+    **Snap to Vertex** de Blender (aimant en haut de la Vue 3D, mode
+    Vertex), `G` pour le déplacer et le coller exactement sur la surface
+    de votre modèle, puis **Entrée** pour valider et passer au point
+    suivant (**S** pour passer un point sans le déplacer, **Echap** pour
+    arrêter — les points déjà placés sont conservés). 46 points proposés
+    (sur les 78 articulations du rig — le reste est dérivé
+    automatiquement, voir Limites connues). Une fois terminé (ou arrêté
+    en cours de route), bouton **"2. Construire le rig"** — génère
+    l'armature à partir de la position actuelle de chaque point (position
+    canonique approximative pour tout point non encore placé). Les points
+    restent dans la collection `CORPUS_MOCAP_RigPoints` (Outliner) après
+    coup, à supprimer une fois le rig construit si vous n'en avez plus
+    besoin. Relancer "1. Points de repère" supprime et recrée tout le jeu
+    de points (perd tout déplacement déjà fait).
 
   Les deux inclus un set de bones faciaux "intermédiaire" (~28 os : yeux,
   paupières, sourcils en 3 points par côté, nez, joues, mâchoire, menton,
@@ -114,7 +122,7 @@ Trois options, selon votre cas :
   positionner un par un) : les bones de doigts restent mis à l'échelle
   automatiquement, à ajuster ensuite en Edit Mode si besoin. Voir
   `addon/character_builder.py` (`generate_rig_for_mesh`,
-  `generate_reference_points`, `build_rig_from_points`).
+  `create_reference_point`, `build_rig_from_points`).
 - **Vous n'avez pas encore de modèle, testez le pipeline** : bouton
   **"Générer un personnage de base"** — génère en un clic une armature
   humanoïde skinnée (poids automatiques) + un mesh (corps + tête) + les
@@ -282,9 +290,23 @@ Trois options, selon votre cas :
   ce soit sur des bones (Edit Mode, variante directe) ou sur des points
   (Object Mode + Snap to Vertex, variante en 2 étapes) — cette dernière
   n'est qu'une manipulation différente, pas une précision automatique en
-  plus. Les points de repère (`generate_reference_points`) n'incluent pas
-  les doigts (trop nombreux à positionner un par un). Aucune des deux
-  variantes ne skinne jamais le mesh cible automatiquement.
+  plus. Aucune des deux variantes ne skinne jamais le mesh cible
+  automatiquement.
+- **Points de repère** (`character_builder.py` : `primary_joint_names`,
+  `_secondary_joint_offsets`) : sur les 78 articulations du rig, 46 sont
+  proposées individuellement dans le flux interactif ("primaires") et 32
+  ("secondaires" — bout d'un bone de contrôle court sans signification
+  anatomique propre, ex. `eye_socket.L`) sont dérivées automatiquement de
+  leur point primaire associé (même décalage relatif que la position
+  canonique) plutôt que positionnées à la main — sinon, ~78 points un par
+  un pour un simple visage est ingérable. Cette dérivation reste une
+  simple translation figée : si votre modèle a des proportions très
+  différentes du personnage de référence à cet endroit précis (ex. des
+  oreilles bien plus grandes), le point dérivé peut nécessiter un ajustage
+  manuel après coup (Edit Mode sur l'armature générée) — pas de recalcul
+  automatique tenant compte de la géométrie réelle. N'incluent pas les
+  doigts (trop nombreux à positionner un par un) : les bones de doigts
+  restent mis à l'échelle automatiquement, comme pour la variante directe.
 - Rotation de tête (`facial_transformation_matrixes` → bone "head") :
   mapping d'axes empirique (`addon/face_mapping.py`, `_MP_TO_RIG`), pas
   formellement documenté par MediaPipe — à vérifier/ajuster si un axe
