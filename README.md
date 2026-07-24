@@ -180,11 +180,22 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
   visé depuis le centre des épaules vers chaque épaule (amortissement de
   profondeur fort, `CLAVICLE_DEPTH_DAMPING`, signal subtil) — à valider
   en conditions réelles.
-- Rotation du poignet (`hand.L/R`) : réactivée après avoir trouvé un
-  amortissement de profondeur manquant sur la référence de torsion
-  (`right_raw` dans `_hand_orientation_matrix`) — à revalider en
-  conditions réelles, notamment sur un rig externe (elle avait causé un
-  chaos des doigts en cascade avant ce correctif).
+- Rotation du poignet (`hand.L/R`) : refonte architecturale — l'ancienne
+  approche calculait une orientation complète à 3 degrés de liberté à
+  partir des seuls landmarks de la main (`_hand_orientation_matrix`,
+  supprimée), indépendamment de la direction de l'avant-bras (issue d'un
+  autre modèle MediaPipe, Pose Landmarker) ; sans garantie de cohérence
+  entre les deux, la main pouvait visuellement se "décrocher" du
+  prolongement de l'avant-bras, faisant tourner la rotation sur le
+  mauvais axe. Nouvelle approche (`_wrist_twist_quaternion` dans
+  `hand_mapping.py`) : l'axe de visée du poignet est désormais **toujours**
+  celui de l'orientation de repos actuelle du bone (donc exactement dans
+  le prolongement de l'avant-bras, via `bone_mapping.bone_rest_world_rot`,
+  jamais recalculé depuis les landmarks main) ; seule une **torsion pure**
+  autour de cet axe fixe (pronation/supination) est dérivée de la
+  direction index→auriculaire. Preuve mathématique de pureté de la
+  torsion vérifiée par un test autonome. Reste soumis au même angle mort
+  mono-caméra (voir plus bas) — à revalider en conditions réelles.
 - Mapping visage par correspondance de nom uniquement (pas de zone de
   mapping manuel dans l'UI pour l'instant) : fonctionne directement si le
   mesh a des shape keys nommées selon la convention ARKit, sinon les
@@ -203,14 +214,19 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
   (pas de maillage dense disponible côté corps, contrairement au visage
   qui en a 478).
 - Mains/doigts (`addon/hand_mapping.py`) : doigts en simple "aim" (pas de
-  torsion). Poignet (`hand.L/R`) en rotation complète 3-DOF (pronation/
-  supination captée, `_hand_orientation_matrix`) — **validé fonctionnel**,
-  mais avec un angle mort mono-caméra confirmé : si l'avant-bras pointe à
-  peu près vers la caméra, la rotation du poignet autour de cet axe est
-  quasi invisible en 2D (silhouette qui change à peine), donc peu/pas
-  suivie. Fonctionne bien quand le bras est plus perpendiculaire à l'axe
-  caméra (ex: bras tendu sur le côté). Limite géométrique du mono-caméra,
-  pas un bug — la Phase 5 (multi-caméra) la résoudrait. Pas de gel sur
+  torsion). Poignet (`hand.L/R`) en **torsion pure autour de l'axe fixe de
+  l'avant-bras** (pronation/supination captée, `_wrist_twist_quaternion` —
+  voir la note ci-dessus sur la refonte) — garantit que la main reste
+  toujours dans le prolongement visuel de l'avant-bras, quel que soit le
+  bruit sur les landmarks de la main. Angle mort mono-caméra confirmé : si
+  l'avant-bras pointe à peu près vers la caméra, la rotation du poignet
+  autour de cet axe est quasi invisible en 2D (silhouette qui change à
+  peine), donc peu/pas suivie. Fonctionne bien quand le bras est plus
+  perpendiculaire à l'axe caméra (ex: bras tendu sur le côté). Limite
+  géométrique du mono-caméra, pas un bug — la Phase 5 (multi-caméra) la
+  résoudrait. Une limite de rotation anatomique optionnelle est
+  disponible via le bouton "Limiter la rotation (poignet)" du panneau
+  (ajoute une contrainte `LIMIT_ROTATION` sur l'os actif). Pas de gel sur
   confiance basse (MediaPipe Hand Landmarker ne donne pas de score de
   visibilité par point comme Pose) — une main est soit suivie entièrement,
   soit gelée entièrement si non détectée. Sensible à l'occlusion

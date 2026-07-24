@@ -162,12 +162,29 @@ def _landmark_to_vector(landmark: dict) -> Vector:
     return Vector((x, y, z))
 
 
+def bone_rest_world_rot(pose_bone: bpy.types.PoseBone, armature_obj: bpy.types.Object) -> Matrix:
+    """Orientation de repos de `pose_bone` exprimée dans l'espace du rig,
+    en tenant compte de la matrice *courante* du parent (`pose_bone.parent.matrix`,
+    pas sa propre pose de repos) — donc l'appelant doit avoir rafraîchi le
+    depsgraph (`view_layer.update()`) si le parent vient d'être modifié
+    dans la même trame. Factorisé pour être réutilisé par _aim_bone,
+    _apply_full_rotation, et le calcul de torsion du poignet
+    (hand_mapping.py) qui a besoin de connaître cette orientation sans
+    en changer l'axe de visée. Peut lever ValueError si la matrice de
+    repos est non-inversible (bone à configuration dégénérée)."""
+    bone = pose_bone.bone
+    if pose_bone.parent is not None:
+        parent_world_rot = pose_bone.parent.matrix.to_3x3()
+        rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
+    else:
+        parent_world_rot = armature_obj.matrix_world.to_3x3()
+        rest_local_rot = bone.matrix_local.to_3x3()
+    return parent_world_rot @ rest_local_rot
+
+
 def _aim_bone(pose_bone: bpy.types.PoseBone, target_dir_world: Vector, armature_obj: bpy.types.Object) -> None:
     """Oriente `pose_bone` pour que son axe de repos (Y local) pointe vers
-    `target_dir_world`, exprimé dans l'espace du rig. Utilise la matrice
-    monde *actuelle* du parent (`pose_bone.parent.matrix`), donc l'appelant
-    doit avoir rafraîchi le depsgraph (`view_layer.update()`) si le parent
-    vient d'être modifié dans la même trame.
+    `target_dir_world`, exprimé dans l'espace du rig.
 
     Gèle silencieusement (ne touche pas à la rotation) si une matrice de
     repos s'avère non-inversible (bone à l'échelle/configuration
@@ -175,14 +192,7 @@ def _aim_bone(pose_bone: bpy.types.PoseBone, target_dir_world: Vector, armature_
     voir aussi print de diagnostic pour repérer l'os fautif."""
     bone = pose_bone.bone
     try:
-        if pose_bone.parent is not None:
-            parent_world_rot = pose_bone.parent.matrix.to_3x3()
-            rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
-        else:
-            parent_world_rot = armature_obj.matrix_world.to_3x3()
-            rest_local_rot = bone.matrix_local.to_3x3()
-
-        rest_world_rot = parent_world_rot @ rest_local_rot
+        rest_world_rot = bone_rest_world_rot(pose_bone, armature_obj)
 
         target = target_dir_world.normalized()
         if target.length_squared < 1e-8:
@@ -221,14 +231,7 @@ def _apply_full_rotation(
     rotation du buste)."""
     bone = pose_bone.bone
     try:
-        if pose_bone.parent is not None:
-            parent_world_rot = pose_bone.parent.matrix.to_3x3()
-            rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
-        else:
-            parent_world_rot = armature_obj.matrix_world.to_3x3()
-            rest_local_rot = bone.matrix_local.to_3x3()
-        rest_world_rot = parent_world_rot @ rest_local_rot
-
+        rest_world_rot = bone_rest_world_rot(pose_bone, armature_obj)
         local_rot = rest_world_rot.inverted() @ world_target_rot @ rest_world_rot
     except ValueError:
         print(f"[CORPUS-MOCAP] Matrice de repos non-inversible pour l'os '{bone.name}' — gelé cette trame.")
