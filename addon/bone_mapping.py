@@ -21,6 +21,8 @@ capter la rotation du buste sur lui-même (pivoter sans se pencher).
 
 from __future__ import annotations
 
+import math
+
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
@@ -91,6 +93,22 @@ VISIBILITY_THRESHOLD = 0.5
 # pleine sensibilité) — réduit les faux positifs dus au mouvement des
 # bras sans réduire la réactivité de l'inclinaison/direction.
 TORSO_TWIST_DAMPING = 0.5
+
+# Angle max (degrés) qu'une direction de membre (_aim_bone) peut changer
+# en une seule trame (~1/30s à la fréquence de capture). Un mouvement
+# humain réel ne peut pas faire pivoter un bras/une jambe de plus que ça
+# en un instant — un saut plus grand signale presque toujours un landmark
+# MediaPipe ponctuellement aberrant (confiance modérée mais position
+# fausse : VISIBILITY_THRESHOLD ne filtre que les landmarks peu confiants,
+# pas les landmarks confiants mais faux) plutôt qu'un vrai mouvement.
+# Complémentaire au bouton "Ajouter des limites anatomiques" du panneau
+# (qui borne la PLAGE de rotation atteignable, pas la VITESSE à laquelle
+# elle est atteinte) : un saut brutal peut très bien rester dans une
+# plage anatomique plausible tout en étant physiquement impossible aussi
+# vite (ex. bras qui "téléporte" d'un côté à l'autre du corps en 1/30s).
+# Le membre est gelé cette trame plutôt que de suivre le saut (même
+# logique que le gel sur confiance basse ou matrice non-inversible).
+MAX_DIRECTION_CHANGE_DEG = 90.0
 
 
 def resolve_bone_name(base_name: str, prefix: str = "", suffix: str = "") -> str:
@@ -229,7 +247,12 @@ def _aim_bone(pose_bone: bpy.types.PoseBone, target_dir_world: Vector, armature_
     Gèle silencieusement (ne touche pas à la rotation) si une matrice de
     repos s'avère non-inversible (bone à l'échelle/configuration
     dégénérée dans le rig cible) plutôt que de planter toute la capture —
-    voir aussi print de diagnostic pour repérer l'os fautif."""
+    voir aussi print de diagnostic pour repérer l'os fautif. Gèle aussi
+    (voir MAX_DIRECTION_CHANGE_DEG) si la nouvelle direction cible
+    s'écarte trop brutalement de la direction actuelle du bone depuis la
+    dernière trame appliquée — protège contre un landmark ponctuellement
+    aberrant (confiant mais faux) qui ferait "téléporter" un membre dans
+    une direction très éloignée du mouvement réel en un instant."""
     bone = pose_bone.bone
     try:
         rest_world_rot = bone_rest_world_rot(pose_bone, armature_obj)
@@ -242,6 +265,17 @@ def _aim_bone(pose_bone: bpy.types.PoseBone, target_dir_world: Vector, armature_
     except ValueError:
         print(f"[CORPUS-MOCAP] Matrice de repos non-inversible pour l'os '{bone.name}' — gelé cette trame.")
         return
+
+    if pose_bone.rotation_mode == "QUATERNION":
+        current_local_dir = (pose_bone.rotation_quaternion @ Vector((0.0, 1.0, 0.0))).normalized()
+        cos_angle = max(-1.0, min(1.0, current_local_dir.dot(local_target)))
+        change_deg = math.degrees(math.acos(cos_angle))
+        if change_deg > MAX_DIRECTION_CHANGE_DEG:
+            print(
+                f"[CORPUS-MOCAP] Saut de direction anatomiquement improbable "
+                f"({change_deg:.0f}°) pour l'os '{bone.name}' — gelé cette trame."
+            )
+            return
 
     quat = Vector((0.0, 1.0, 0.0)).rotation_difference(local_target)
 

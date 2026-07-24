@@ -349,8 +349,27 @@ Trois options, selon votre cas :
   (réglage plus fin, un seul os à la fois). Idempotent (ré-exécuter met à
   jour les mêmes contraintes plutôt que d'en empiler) ; valeurs
   ajustables ensuite dans Bone Constraint Properties si trop
-  restrictives/permissives pour votre rig — à valider en conditions
-  réelles.
+  restrictives/permissives pour votre rig.
+  **Insuffisant à lui seul** : confirmé en conditions réelles qu'un
+  membre peut rester déformé de façon extrême même avec cette contrainte
+  active, car un saut brutal d'une trame à l'autre peut très bien rester
+  DANS la plage anatomique tout en étant physiquement impossible aussi
+  vite (`LIMIT_ROTATION` borne la plage atteignable, pas la vitesse à
+  laquelle elle est atteinte). D'où le filtre de continuité ci-dessous,
+  qui s'attaque au problème à la source plutôt qu'en aval.
+- **Filtre de continuité anti-saut brutal** (`bone_mapping.
+  MAX_DIRECTION_CHANGE_DEG`, 90° par défaut) : `_aim_bone` compare
+  désormais la nouvelle direction cible à la direction *actuelle* du
+  bone (lue sur `rotation_quaternion` avant écrasement) ; si l'écart
+  dépasse ce seuil en une seule trame (~1/30s), le bone est gelé cette
+  trame plutôt que de suivre le saut — même logique que le gel sur
+  confiance basse ou matrice non-inversible, mais déclenché par la
+  *vitesse* du changement plutôt que par la confiance MediaPipe (un
+  landmark peut être confiant tout en étant ponctuellement faux).
+  S'applique à tous les appels de `_aim_bone` (colonne vertébrale,
+  épaules/clavicules, bras, jambes). Complémentaire aux limites
+  anatomiques ci-dessus (l'un borne la vitesse, l'autre la plage) — à
+  valider en conditions réelles.
 - Torsion buste/bassin (pivoter sans se pencher) : **tentée puis
   retirée** cette itération — le code existe (`_torso_orientation_matrix`,
   `_apply_full_rotation`, `TORSO_TWIST_DAMPING`, non utilisés actuellement)
