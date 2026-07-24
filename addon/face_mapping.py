@@ -133,14 +133,14 @@ def apply_eyebrows(armature_obj: bpy.types.Object, blendshapes: dict[str, float]
     browOuterUpLeft/Right, tous deux réduits par browDownLeft/Right pour
     la baisse. brow.mid.L/R n'est pas piloté (voir constantes ci-dessus)."""
     inner_up = blendshapes.get("browInnerUp", 0.0)
-    values = {
-        (BROW_IN_BONE_NAMES, "L"): inner_up - blendshapes.get("browDownLeft", 0.0),
-        (BROW_IN_BONE_NAMES, "R"): inner_up - blendshapes.get("browDownRight", 0.0),
-        (BROW_OUT_BONE_NAMES, "L"): blendshapes.get("browOuterUpLeft", 0.0) - blendshapes.get("browDownLeft", 0.0),
-        (BROW_OUT_BONE_NAMES, "R"): blendshapes.get("browOuterUpRight", 0.0) - blendshapes.get("browDownRight", 0.0),
-    }
-    for (bone_names, side), raw_value in values.items():
-        pose_bone = armature_obj.pose.bones.get(resolve_bone_name(bone_names[side], prefix, suffix))
+    values = [
+        (BROW_IN_BONE_NAMES["L"], inner_up - blendshapes.get("browDownLeft", 0.0)),
+        (BROW_IN_BONE_NAMES["R"], inner_up - blendshapes.get("browDownRight", 0.0)),
+        (BROW_OUT_BONE_NAMES["L"], blendshapes.get("browOuterUpLeft", 0.0) - blendshapes.get("browDownLeft", 0.0)),
+        (BROW_OUT_BONE_NAMES["R"], blendshapes.get("browOuterUpRight", 0.0) - blendshapes.get("browDownRight", 0.0)),
+    ]
+    for bone_name, raw_value in values:
+        pose_bone = armature_obj.pose.bones.get(resolve_bone_name(bone_name, prefix, suffix))
         if pose_bone is None:
             continue
         clamped = max(-1.0, min(1.0, raw_value))
