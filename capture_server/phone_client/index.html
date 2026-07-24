@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CORPUS-MOCAP — Compagnon mobile</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #111; color: #eee; font-family: sans-serif; height: 100%; overflow: hidden; }
+  #wrap { position: relative; width: 100%; height: 100%; }
+  video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
+  video { visibility: hidden; }
+  #hud { position: absolute; top: 0; left: 0; right: 0; padding: 10px 14px; background: rgba(0,0,0,0.55); font-size: 15px; line-height: 1.5; z-index: 10; }
+  #status { font-weight: bold; }
+  .ok { color: #4caf50; }
+  .bad { color: #e53935; }
+  .warn { color: #ffb300; }
+  #startBtn { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 14px 28px; font-size: 18px; border-radius: 8px; border: none; background: #4caf50; color: white; z-index: 10; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="video" playsinline autoplay muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="hud">
+    CORPUS-MOCAP — Compagnon mobile<br>
+    Serveur : <span id="wsAddress">—</span><br>
+    Connexion : <span id="wsStatus" class="bad">déconnecté</span><br>
+    Détection : <span id="status" class="bad">en attente</span>
+  </div>
+  <button id="startBtn">Démarrer la caméra</button>
+</div>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+const wsStatusEl = document.getElementById("wsStatus");
+const wsAddressEl = document.getElementById("wsAddress");
+const startBtn = document.getElementById("startBtn");
+
+// Adresse du serveur WebSocket passée en paramètre d'URL par phone_server.py
+// (voir l'URL affichée dans le terminal de capture_server), ex.
+// "http://192.168.1.20:8080/?ws=192.168.1.20:8766". À défaut, on essaie le
+// même hôte que la page sur le port WebSocket par défaut.
+const params = new URLSearchParams(location.search);
+const wsAddress = params.get("ws") || `${location.hostname}:8766`;
+wsAddressEl.textContent = wsAddress;
+
+let ws = null;
+let poseLandmarker = null;
+let running = false;
+
+// Connexions squelette (mêmes paires que capture_server/server.py:POSE_CONNECTIONS)
+const POSE_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],
+  [11,12],[11,13],[13,15],[15,17],[15,19],[15,21],[17,19],
+  [12,14],[14,16],[16,18],[16,20],[16,22],[18,20],
+  [11,23],[12,24],[23,24],
+  [23,25],[25,27],[27,29],[27,31],[29,31],
+  [24,26],[26,28],[28,30],[28,32],[30,32],
+];
+
+function connectWebSocket() {
+  ws = new WebSocket(`ws://${wsAddress}/`);
+  ws.onopen = () => { wsStatusEl.textContent = "connecté"; wsStatusEl.className = "ok"; };
+  ws.onclose = () => {
+    wsStatusEl.textContent = "déconnecté — nouvelle tentative...";
+    wsStatusEl.className = "bad";
+    setTimeout(connectWebSocket, 2000);
+  };
+  ws.onerror = () => { ws.close(); };
+}
+
+function drawSkeleton(landmarks) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "#4caf50";
+  ctx.fillStyle = "#4caf50";
+  ctx.lineWidth = 3;
+  for (const [a, b] of POSE_CONNECTIONS) {
+    const pa = landmarks[a], pb = landmarks[b];
+    ctx.beginPath();
+    ctx.moveTo(pa.x * canvas.width, pa.y * canvas.height);
+    ctx.lineTo(pb.x * canvas.width, pb.y * canvas.height);
+    ctx.stroke();
+  }
+  for (const p of landmarks) {
+    ctx.beginPath();
+    ctx.arc(p.x * canvas.width, p.y * canvas.height, 4, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+}
+
+function loop() {
+  if (!running) return;
+  const nowMs = performance.now();
+  const result = poseLandmarker.detectForVideo(video, nowMs);
+
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    const landmarks = lm.map((p) => ({
+      x: p.x, y: p.y, z: p.z,
+      visibility: p.visibility !== undefined ? p.visibility : 1.0,
+    }));
+    drawSkeleton(lm);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ landmarks }));
+    }
+    statusEl.textContent = "OK";
+    statusEl.className = "ok";
+  } else {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    statusEl.textContent = "perdu";
+    statusEl.className = "warn";
+  }
+
+  requestAnimationFrame(loop);
+}
+
+async function start() {
+  startBtn.disabled = true;
+  startBtn.textContent = "Chargement du modèle...";
+
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  // Réutilise le même fichier .task que le pipeline webcam PC (voir
+  // phone_server.py:_PhoneClientHTTPHandler, sert capture_server/models/).
+  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: "/models/pose_landmarker_lite.task", delegate: "GPU" },
+    runningMode: "VIDEO",
+    numPoses: 1,
+  });
+
+  startBtn.textContent = "Activation de la caméra...";
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false,
+  });
+  video.srcObject = stream;
+  await video.play();
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  connectWebSocket();
+
+  startBtn.style.display = "none";
+  running = true;
+  requestAnimationFrame(loop);
+}
+
+startBtn.addEventListener("click", () => {
+  start().catch((err) => {
+    statusEl.textContent = "erreur";
+    statusEl.className = "bad";
+    startBtn.disabled = false;
+    startBtn.textContent = "Réessayer";
+    alert("Erreur de démarrage : " + err.message + "\n\nVérifiez que vous avez autorisé l'accès à la caméra, et que la page est ouverte en HTTPS ou depuis localhost/un réseau local (requis par le navigateur pour getUserMedia).");
+    console.error(err);
+  });
+});
+</script>
+</body>
+</html>

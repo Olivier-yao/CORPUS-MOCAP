@@ -44,6 +44,20 @@ class MOCAP_Settings(bpy.types.PropertyGroup):
         default="",
     )
 
+    capture_source: bpy.props.EnumProperty(
+        name="Source",
+        description=(
+            "Purement indicatif : rappelle comment lancer capture_server "
+            "(la connexion TCP reçue par l'addon est identique quelle que soit la "
+            "source réellement utilisée côté capture_server)"
+        ),
+        items=[
+            ("webcam", "Webcam PC", "python server.py (comportement par défaut)"),
+            ("phone", "Téléphone", "python server.py --source phone — voir capture_server/phone_client/"),
+        ],
+        default="webcam",
+    )
+
     host: bpy.props.StringProperty(
         name="Hôte",
         default="127.0.0.1",

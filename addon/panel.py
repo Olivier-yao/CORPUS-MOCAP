@@ -71,10 +71,16 @@ class VIEW3D_PT_corpus_mocap(bpy.types.Panel):
             limit_box.label(text="(actif en Pose Mode, sur l'os sélectionné)", icon="INFO")
 
         box = layout.box()
-        box.label(text="Source : Webcam PC")
+        box.prop(settings, "capture_source", expand=True)
         row = box.row(align=True)
         row.prop(settings, "host")
         row.prop(settings, "port")
+        if settings.capture_source == "webcam":
+            box.label(text="Lancer : python server.py", icon="CONSOLE")
+        else:
+            box.label(text="Lancer : python server.py --source phone", icon="CONSOLE")
+            box.label(text="Ouvrez l'URL affichée dans le terminal sur le téléphone", icon="INFO")
+            box.label(text="(même réseau WiFi — corps seul pour l'instant)", icon="INFO")
 
         layout.prop(settings, "stability")
 

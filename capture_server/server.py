@@ -1,28 +1,49 @@
-"""CORPUS-MOCAP — capture_server (Phase 1+2+mains, source webcam PC).
+"""CORPUS-MOCAP — capture_server (Phase 1+2+mains+téléphone).
 
-Process externe, indépendant de Blender : capture la webcam via OpenCV,
-détecte le squelette (MediaPipe Pose), le visage (MediaPipe Face
-Landmarker, coefficients blend shapes ARKit) et les mains (MediaPipe Hand
-Landmarker, 21 points par main) via la Tasks API — l'ancienne API
-`mp.solutions.*` a été retirée du paquet à partir de mediapipe 0.10.x
-récents —, lisse les signaux (One Euro Filter) et diffuse le tout à
-l'addon Blender via un socket TCP local (une ligne JSON par trame, voir
-protocol.py).
+Process externe, indépendant de Blender, avec deux sources possibles
+(--source webcam, par défaut, ou --source phone — cahier des charges
+Module 5) :
+
+- **webcam** (défaut) : capture la webcam via OpenCV, détecte le
+  squelette (MediaPipe Pose), le visage (MediaPipe Face Landmarker,
+  coefficients blend shapes ARKit) et les mains (MediaPipe Hand
+  Landmarker, 21 points par main) via la Tasks API — l'ancienne API
+  `mp.solutions.*` a été retirée du paquet à partir de mediapipe 0.10.x
+  récents.
+- **phone** : le corps (pose) est détecté par MediaPipe.js directement
+  DANS LE NAVIGATEUR du téléphone (voir phone_server.py et
+  phone_client/) — ce process reçoit uniquement les landmarks déjà
+  calculés via WebSocket, pas de flux vidéo. Visage/mains pas encore
+  disponibles depuis le téléphone dans cette version (voir feuille de
+  route du README) : ignorés en mode phone même si les modèles sont
+  fournis.
+
+Dans les deux cas, les landmarks sont lissés (One Euro Filter) puis
+diffusés à l'addon Blender via un socket TCP local (une ligne JSON par
+trame, voir protocol.py) — le reste du pipeline (filtres, protocole,
+mapping côté addon) est identique quelle que soit la source.
 
 Nécessite les modèles "pose_landmarker_lite.task", "face_landmarker.task"
 et "hand_landmarker.task" dans ./models/ (voir README.md pour le
 téléchargement). Visage et mains peuvent être désactivés avec --no-face /
---no-hands si non nécessaires.
+--no-hands si non nécessaires (mode webcam).
 
-Une fenêtre d'aperçu (flux caméra + squelette détecté superposé) s'ouvre
-par défaut pour vérifier le cadrage avant/pendant l'enregistrement dans
-Blender (cahier des charges, Module 1). Désactivable avec --no-preview.
+Une fenêtre d'aperçu s'ouvre par défaut pour vérifier le cadrage avant/
+pendant l'enregistrement dans Blender (cahier des charges, Module 1) —
+flux caméra réel en mode webcam, squelette seul sur fond noir en mode
+phone (pas de flux vidéo reçu du téléphone). Désactivable avec
+--no-preview.
 
 Usage :
-    python server.py [--host 127.0.0.1] [--port 9001] [--camera 0]
+    python server.py [--host 127.0.0.1] [--port 9001]
+                      [--source webcam|phone]
+                      # mode webcam :
+                      [--camera 0]
                       [--model models/pose_landmarker_lite.task]
                       [--face-model models/face_landmarker.task] [--no-face]
                       [--hand-model models/hand_landmarker.task] [--no-hands]
+                      # mode phone :
+                      [--phone-http-port 8080] [--phone-ws-port 8766]
                       [--no-preview]
 """
 
@@ -38,10 +59,12 @@ import time
 
 import cv2
 import mediapipe as mp
+import numpy as np
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.core.base_options import BaseOptions
 
 from one_euro_filter import BlendshapeFilter, HandFilter, HeadRotationFilter, LandmarkFilter
+from phone_server import PhoneBridge
 from protocol import (
     LANDMARK_INDEX,
     NUM_LANDMARKS,
@@ -313,6 +336,9 @@ def run(
     face_model_path: str | None,
     hand_model_path: str | None,
     show_preview: bool = True,
+    source: str = "webcam",
+    phone_http_port: int = 8080,
+    phone_ws_port: int = 8766,
 ) -> None:
     landmark_filter = LandmarkFilter(NUM_LANDMARKS)
     blendshape_filter = BlendshapeFilter()
@@ -326,17 +352,35 @@ def run(
     server_sock.settimeout(0.01)
     print(f"[capture_server] en attente de l'addon Blender sur {host}:{port} ...")
 
-    # Sous Windows, le backend par défaut d'OpenCV (MSMF) peut se bloquer
-    # indéfiniment à l'ouverture sur certaines machines même si la caméra
-    # fonctionne très bien ailleurs ; DirectShow est nettement plus fiable.
-    if sys.platform == "win32":
-        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-    else:
-        cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        raise RuntimeError(f"Impossible d'ouvrir la caméra index={camera_index}")
+    is_phone = source == "phone"
+    if is_phone and (face_model_path or hand_model_path):
+        print(
+            "[capture_server] visage/mains pas encore disponibles en mode --source phone "
+            "(le téléphone n'envoie que la pose du corps) — ignorés."
+        )
+        face_model_path = None
+        hand_model_path = None
 
-    landmarker = create_pose_landmarker(model_path)
+    cap = None
+    phone_bridge: PhoneBridge | None = None
+    landmarker = None
+
+    if is_phone:
+        phone_bridge = PhoneBridge(phone_http_port, phone_ws_port)
+        phone_bridge.start()
+    else:
+        # Sous Windows, le backend par défaut d'OpenCV (MSMF) peut se
+        # bloquer indéfiniment à l'ouverture sur certaines machines même
+        # si la caméra fonctionne très bien ailleurs ; DirectShow est
+        # nettement plus fiable.
+        if sys.platform == "win32":
+            cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(camera_index)
+        if not cap.isOpened():
+            raise RuntimeError(f"Impossible d'ouvrir la caméra index={camera_index}")
+        landmarker = create_pose_landmarker(model_path)
+
     face_landmarker = create_face_landmarker(face_model_path) if face_model_path else None
     hand_landmarker = create_hand_landmarker(hand_model_path) if hand_model_path else None
     frame_timestamp_ms = 0
@@ -358,17 +402,25 @@ def run(
                 except socket.timeout:
                     pass
 
-            ok, frame = cap.read()
-            if not ok:
-                time.sleep(0.01)
-                continue
+            mp_image = None
+            frame = None
 
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-            frame_timestamp_ms += 1
-            result = landmarker.detect_for_video(mp_image, frame_timestamp_ms)
+            if is_phone:
+                raw_landmarks = phone_bridge.get_latest_landmarks()
+                time.sleep(1.0 / 30.0)  # pas de source bloquante (cap.read()) pour cadencer la boucle
+                if show_preview:
+                    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            else:
+                ok, frame = cap.read()
+                if not ok:
+                    time.sleep(0.01)
+                    continue
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+                frame_timestamp_ms += 1
+                result = landmarker.detect_for_video(mp_image, frame_timestamp_ms)
+                raw_landmarks = extract_landmarks(result)
 
-            raw_landmarks = extract_landmarks(result)
             tracking_ok = raw_landmarks is not None
             smoothed = landmark_filter.process(raw_landmarks)
 
@@ -376,7 +428,7 @@ def run(
             head_rotation = None
             face_points_2d = None
             face_tracking_ok = False
-            if face_landmarker is not None:
+            if face_landmarker is not None and mp_image is not None:
                 face_result = face_landmarker.detect_for_video(mp_image, frame_timestamp_ms)
                 raw_blendshapes = extract_blendshapes(face_result)
                 raw_head_rotation = extract_head_rotation(face_result)
@@ -388,13 +440,13 @@ def run(
 
             hands = None
             hands_tracking_ok = False
-            if hand_landmarker is not None:
+            if hand_landmarker is not None and mp_image is not None:
                 hand_result = hand_landmarker.detect_for_video(mp_image, frame_timestamp_ms)
                 raw_hands = extract_hands(hand_result)
                 hands_tracking_ok = raw_hands is not None
                 hands = hand_filter.process(raw_hands)
 
-            if show_preview:
+            if show_preview and frame is not None:
                 draw_preview(frame, raw_landmarks, tracking_ok)
                 if hand_landmarker is not None:
                     draw_hands_preview(frame, hands)
@@ -407,6 +459,10 @@ def run(
                     hands_status = "Mains OK" if hands_tracking_ok else "Mains non détectées"
                     hands_color = (0, 200, 0) if hands_tracking_ok else (0, 0, 220)
                     cv2.putText(frame, hands_status, (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.7, hands_color, 2)
+                if is_phone:
+                    phone_status = "Téléphone connecté" if phone_bridge.connected else "En attente du téléphone..."
+                    phone_color = (0, 200, 0) if phone_bridge.connected else (0, 165, 255)
+                    cv2.putText(frame, phone_status, (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.7, phone_color, 2)
                 cv2.imshow(PREVIEW_WINDOW_NAME, frame)
                 if cv2.waitKey(1) & 0xFF == 27:  # Echap : ferme juste l'aperçu, pas le serveur
                     cv2.destroyWindow(PREVIEW_WINDOW_NAME)
@@ -429,21 +485,29 @@ def run(
     except KeyboardInterrupt:
         print("[capture_server] arrêt demandé")
     finally:
-        cap.release()
-        landmarker.close()
+        if cap is not None:
+            cap.release()
+        if landmarker is not None:
+            landmarker.close()
         if face_landmarker is not None:
             face_landmarker.close()
         if hand_landmarker is not None:
             hand_landmarker.close()
+        if phone_bridge is not None:
+            phone_bridge.stop()
         server_sock.close()
         cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="CORPUS-MOCAP capture_server (Phase 1)")
+    parser = argparse.ArgumentParser(description="CORPUS-MOCAP capture_server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9001)
-    parser.add_argument("--camera", type=int, default=0, help="Index de la webcam OpenCV")
+    parser.add_argument(
+        "--source", choices=("webcam", "phone"), default="webcam",
+        help="webcam (défaut, OpenCV + MediaPipe Python) ou phone (MediaPipe.js sur le téléphone, voir phone_server.py)",
+    )
+    parser.add_argument("--camera", type=int, default=0, help="Index de la webcam OpenCV (mode webcam)")
     parser.add_argument("--model", default=DEFAULT_MODEL_PATH, help="Chemin vers le fichier .task du modèle de pose")
     parser.add_argument(
         "--face-model", default=DEFAULT_FACE_MODEL_PATH, help="Chemin vers le fichier .task du modèle de visage"
@@ -453,7 +517,13 @@ if __name__ == "__main__":
         "--hand-model", default=DEFAULT_HAND_MODEL_PATH, help="Chemin vers le fichier .task du modèle de mains"
     )
     parser.add_argument("--no-hands", action="store_true", help="Désactive le tracking des mains")
-    parser.add_argument("--no-preview", action="store_true", help="Désactive la fenêtre d'aperçu caméra")
+    parser.add_argument("--no-preview", action="store_true", help="Désactive la fenêtre d'aperçu")
+    parser.add_argument(
+        "--phone-http-port", type=int, default=8080, help="Port HTTP de la page web du téléphone (mode phone)"
+    )
+    parser.add_argument(
+        "--phone-ws-port", type=int, default=8766, help="Port WebSocket des landmarks du téléphone (mode phone)"
+    )
     args = parser.parse_args()
     run(
         args.host,
@@ -463,4 +533,7 @@ if __name__ == "__main__":
         None if args.no_face else args.face_model,
         None if args.no_hands else args.hand_model,
         show_preview=not args.no_preview,
+        source=args.source,
+        phone_http_port=args.phone_http_port,
+        phone_ws_port=args.phone_ws_port,
     )

@@ -1,13 +1,16 @@
-# CORPUS-MOCAP — corps + visage + mains (webcam PC)
+# CORPUS-MOCAP — corps + visage + mains (webcam PC ou téléphone)
 
-Addon Blender de capture de mouvement. Couvre pour l'instant : capture du
-squelette (33 points MediaPipe Pose), du visage (MediaPipe Face
-Landmarker, 52 coefficients blend shapes ARKit) et des mains (MediaPipe
-Hand Landmarker, 21 points articulés par main) via webcam PC, lissage
-(One Euro Filter), application temps réel sur un rig + un mesh à shape
-keys, enregistrement synchronisé en Actions Blender. Pas de stylisation
-cartoon, pas de téléphone (voir `CORPUS-MOCAP_cahier-des-charges.md` et
-la feuille de route ci-dessous).
+Addon Blender de capture de mouvement. Couvre : capture du squelette (33
+points MediaPipe Pose, via webcam PC ou téléphone), du visage (MediaPipe
+Face Landmarker, 52 coefficients blend shapes ARKit, webcam PC
+uniquement), des mains (MediaPipe Hand Landmarker, 21 points articulés
+par main, webcam PC uniquement), lissage (One Euro Filter), application
+temps réel sur un rig + un mesh à shape keys, enregistrement synchronisé
+en Actions Blender, et un post-traitement optionnel "style cartoon"
+(amplification, squash & stretch, timing — voir Utilisation). Le
+cahier des charges original (`CORPUS-MOCAP_cahier-des-charges.md`) est
+maintenant entièrement couvert ; voir la feuille de route ci-dessous
+pour les extensions au-delà (multi-caméra notamment).
 
 ## Architecture
 
@@ -77,6 +80,28 @@ curl.exe -L -o models\hand_landmarker.task https://storage.googleapis.com/mediap
 ```
 
 Le tracking mains peut être désactivé avec `python server.py --no-hands`.
+
+### 4bis. Optionnel — compagnon mobile (téléphone comme source)
+
+Alternative à la webcam PC pour le corps (visage/mains pas encore
+disponibles depuis le téléphone) : `requirements.txt` installe déjà le
+paquet `websockets` nécessaire. Aucun modèle supplémentaire à
+télécharger — MediaPipe.js (qui tourne dans le navigateur du téléphone)
+réutilise directement `pose_landmarker_lite.task` déjà en place, servi
+par `capture_server` lui-même.
+
+```powershell
+python server.py --source phone
+```
+
+Le terminal affiche une adresse du type
+`http://192.168.1.20:8080/?ws=192.168.1.20:8766` — ouvrez-la dans le
+navigateur du téléphone, **sur le même réseau WiFi que ce PC**, cliquez
+"Démarrer la caméra" (autorisez l'accès caméra), et le squelette détecté
+sur le téléphone est envoyé au PC. Voir `capture_server/phone_client/`
+(page web) et `capture_server/phone_server.py` (serveur HTTP + WebSocket
+côté PC). Non testé sur un vrai téléphone au moment de l'écriture — voir
+Limites connues.
 
 ### 5. Rig, visage et mains de test
 
@@ -165,10 +190,15 @@ Trois options, selon votre cas :
 
 ## Utilisation
 
-1. Lancer le serveur : `python capture_server/server.py` (le terminal
-   affiche "en attente de l'addon Blender...").
+1. Lancer le serveur : `python capture_server/server.py` (webcam PC,
+   comportement par défaut) ou `python capture_server/server.py --source
+   phone` (téléphone comme source — voir Installation §4bis). Le
+   terminal affiche "en attente de l'addon Blender...".
 2. Dans Blender, ouvrir le N-panel (touche `N` dans la Vue 3D) > onglet
-   **CORPUS-MOCAP**.
+   **CORPUS-MOCAP**. Le sélecteur **Source** (Webcam PC / Téléphone) en
+   haut de l'encart connexion est purement indicatif — il rappelle
+   comment `capture_server` a été lancé, la connexion TCP reçue par
+   l'addon est identique quelle que soit la source réelle.
 3. Choisir l'armature cible (`CORPUS_MOCAP_TestRig` ou votre personnage) et,
    optionnellement, le mesh visage cible (`CORPUS_MOCAP_TestFace` ou votre
    personnage — doit avoir des shape keys nommées selon la convention
@@ -467,6 +497,26 @@ Trois options, selon votre cas :
   visage. Le easing (poignées bezier) peut nécessiter un réglage plus
   fin après un premier test visuel — à ajuster comme les autres
   constantes empiriques du projet si le rendu ne convient pas.
+- **Compagnon mobile** (`capture_server/phone_client/`,
+  `phone_server.py`) : **non testé sur un vrai téléphone** au moment de
+  l'écriture (pas d'appareil disponible côté développement) — seul le
+  pipeline Python (serveur HTTP, fichier `.task` servi, aller-retour
+  WebSocket) a été validé par script autonome ; la partie MediaPipe.js +
+  caméra ne peut être vérifiée que dans un vrai navigateur mobile, sur
+  un vrai réseau WiFi. Attendez-vous à devoir déboguer en conditions
+  réelles, comme pour chaque fonctionnalité précédente de ce projet.
+  Corps uniquement (visage/mains pas encore transmis depuis le
+  téléphone — le navigateur n'envoie que les landmarks déjà détectés,
+  pas de flux vidéo, pour rester léger sur le WiFi). `getUserMedia`
+  (accès caméra) exige un contexte sécurisé : cette page n'est PAS
+  servie en HTTPS (`http://<ip-locale>:...`), ce qui fonctionne
+  généralement sur un réseau local dans Chrome/Safari mobiles récents
+  (les navigateurs traitent `http://` sur une IP privée comme un
+  contexte "local" autorisé) mais peut nécessiter un réglage navigateur
+  selon le téléphone. Le sélecteur "Source" du panneau addon est
+  purement indicatif (voir Utilisation) : il ne pilote aucune logique
+  réelle côté addon, seulement `capture_server` (démarré séparément)
+  détermine la source effective.
 
 ## Feuille de route
 
@@ -496,7 +546,17 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
    bouton "Appliquer le style cartoon") — voir Utilisation et Limites
    connues.
 7. **Phase 4 — Compagnon mobile** (un téléphone comme source, via
-   WebSocket local, même pipeline que la webcam PC) : pas commencé.
+   WebSocket local, même pipeline que la webcam PC) : ✅ fait, **corps
+   seul** — page web (`capture_server/phone_client/`, MediaPipe.js dans
+   le navigateur du téléphone, pas d'app native à installer) + pont
+   HTTP/WebSocket côté PC (`capture_server/phone_server.py`,
+   `server.py --source phone`). Visage/mains pas encore disponibles
+   depuis le téléphone. Non testé sur un vrai téléphone au moment de
+   l'écriture (pipeline Python validé de bout en bout par script
+   autonome — serveur HTTP, fichier modèle servi, aller-retour
+   WebSocket — mais pas la partie MediaPipe.js/caméra qui ne peut
+   s'exécuter que dans un vrai navigateur mobile) — voir Limites
+   connues.
 8. **Phase 5 — Multi-caméra** (plusieurs téléphones à angles différents,
    fusion des vues pour plus de précision — d'abord une moyenne pondérée
    par confiance, triangulation calibrée en raffinement ultérieur si
