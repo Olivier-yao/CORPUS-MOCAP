@@ -95,13 +95,33 @@ python server.py --source phone
 ```
 
 Le terminal affiche une adresse du type
-`http://192.168.1.20:8080/?ws=192.168.1.20:8766` — ouvrez-la dans le
-navigateur du téléphone, **sur le même réseau WiFi que ce PC**, cliquez
-"Démarrer la caméra" (autorisez l'accès caméra), et le squelette détecté
-sur le téléphone est envoyé au PC. Voir `capture_server/phone_client/`
+`http://192.168.1.64:8080/?ws=192.168.1.64:8766` — ouvrez-la dans le
+navigateur du téléphone, **sur le même réseau WiFi que ce PC**.
+
+**Avant le premier essai** (Chrome Android bloque `getUserMedia` — accès
+caméra — sur toute page HTTP qui n'est pas `localhost`, une IP locale
+n'est pas automatiquement acceptée) :
+1. Sur le téléphone, ouvrez `chrome://flags/#unsafely-treat-insecure-origin-as-secure`.
+2. Dans le champ, entrez l'origine exacte affichée par le serveur (ex.
+   `http://192.168.1.64:8080`, sans le chemin ni le `?ws=...`).
+3. Passez le réglage juste en dessous sur **Enabled**, puis **Relaunch**.
+
+Ensuite, rouvrez l'adresse complète (avec `?ws=...`), cliquez "Démarrer
+la caméra" (autorisez l'accès caméra), et le squelette détecté sur le
+téléphone est envoyé au PC. **La fenêtre d'aperçu du PC affiche le
+squelette sur fond noir, pas l'image de la caméra du téléphone** — voulu
+: le téléphone n'envoie jamais son flux vidéo, seulement les points déjà
+détectés (voir Limites connues). Voir `capture_server/phone_client/`
 (page web) et `capture_server/phone_server.py` (serveur HTTP + WebSocket
-côté PC). Non testé sur un vrai téléphone au moment de l'écriture — voir
-Limites connues.
+côté PC). **Validé en conditions réelles** (Chrome Android).
+
+Si l'adresse ne répond pas (page qui charge indéfiniment, `ERR_CONNECTION_TIMED_OUT`) :
+l'IP de la machine change parfois entre deux lancements (renouvellement
+DHCP du WiFi) — **redémarrez `server.py --source phone`** pour réafficher
+l'adresse actuelle plutôt que de réutiliser une ancienne adresse notée
+précédemment. `Test-NetConnection -ComputerName <ip> -Port 8080` en
+PowerShell (champ `SourceAddress` du résultat = IP réelle actuelle de la
+machine) aide à diagnostiquer un décalage d'adresse.
 
 ### 5. Rig, visage et mains de test
 
@@ -498,25 +518,26 @@ Trois options, selon votre cas :
   fin après un premier test visuel — à ajuster comme les autres
   constantes empiriques du projet si le rendu ne convient pas.
 - **Compagnon mobile** (`capture_server/phone_client/`,
-  `phone_server.py`) : **non testé sur un vrai téléphone** au moment de
-  l'écriture (pas d'appareil disponible côté développement) — seul le
-  pipeline Python (serveur HTTP, fichier `.task` servi, aller-retour
-  WebSocket) a été validé par script autonome ; la partie MediaPipe.js +
-  caméra ne peut être vérifiée que dans un vrai navigateur mobile, sur
-  un vrai réseau WiFi. Attendez-vous à devoir déboguer en conditions
-  réelles, comme pour chaque fonctionnalité précédente de ce projet.
+  `phone_server.py`) : **validé en conditions réelles** (Chrome Android).
   Corps uniquement (visage/mains pas encore transmis depuis le
   téléphone — le navigateur n'envoie que les landmarks déjà détectés,
-  pas de flux vidéo, pour rester léger sur le WiFi). `getUserMedia`
-  (accès caméra) exige un contexte sécurisé : cette page n'est PAS
-  servie en HTTPS (`http://<ip-locale>:...`), ce qui fonctionne
-  généralement sur un réseau local dans Chrome/Safari mobiles récents
-  (les navigateurs traitent `http://` sur une IP privée comme un
-  contexte "local" autorisé) mais peut nécessiter un réglage navigateur
-  selon le téléphone. Le sélecteur "Source" du panneau addon est
-  purement indicatif (voir Utilisation) : il ne pilote aucune logique
-  réelle côté addon, seulement `capture_server` (démarré séparément)
-  détermine la source effective.
+  pas de flux vidéo, pour rester léger sur le WiFi ; **la fenêtre
+  d'aperçu du PC affiche donc le squelette sur fond noir, jamais l'image
+  de la caméra du téléphone** — comportement voulu, pas une limitation à
+  corriger). `getUserMedia` (accès caméra) exige un contexte sécurisé :
+  Chrome Android **ne** traite **pas** automatiquement une IP locale en
+  `http://` comme sécurisée (contrairement à ce qu'une note précédente de
+  ce README affirmait à tort) — un réglage manuel unique est nécessaire
+  par téléphone (`chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
+  voir Installation §4bis). L'IP locale de la machine peut changer entre
+  deux lancements de `server.py --source phone` (renouvellement DHCP du
+  WiFi) : toujours utiliser l'adresse fraîchement affichée au démarrage,
+  pas une adresse notée lors d'une session précédente — sinon la
+  connexion échoue silencieusement (`ERR_CONNECTION_TIMED_OUT`,
+  diagnosticable via `Test-NetConnection`). Le sélecteur "Source" du
+  panneau addon est purement indicatif (voir Utilisation) : il ne pilote
+  aucune logique réelle côté addon, seulement `capture_server` (démarré
+  séparément) détermine la source effective.
 
 ## Feuille de route
 
@@ -546,17 +567,15 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
    bouton "Appliquer le style cartoon") — voir Utilisation et Limites
    connues.
 7. **Phase 4 — Compagnon mobile** (un téléphone comme source, via
-   WebSocket local, même pipeline que la webcam PC) : ✅ fait, **corps
-   seul** — page web (`capture_server/phone_client/`, MediaPipe.js dans
-   le navigateur du téléphone, pas d'app native à installer) + pont
+   WebSocket local, même pipeline que la webcam PC) : ✅ fait et
+   **validé en conditions réelles** (Chrome Android), **corps seul** —
+   page web (`capture_server/phone_client/`, MediaPipe.js dans le
+   navigateur du téléphone, pas d'app native à installer) + pont
    HTTP/WebSocket côté PC (`capture_server/phone_server.py`,
    `server.py --source phone`). Visage/mains pas encore disponibles
-   depuis le téléphone. Non testé sur un vrai téléphone au moment de
-   l'écriture (pipeline Python validé de bout en bout par script
-   autonome — serveur HTTP, fichier modèle servi, aller-retour
-   WebSocket — mais pas la partie MediaPipe.js/caméra qui ne peut
-   s'exécuter que dans un vrai navigateur mobile) — voir Limites
-   connues.
+   depuis le téléphone — voir Limites connues (réglage navigateur
+   nécessaire pour l'accès caméra, IP locale à reprendre au démarrage du
+   serveur).
 8. **Phase 5 — Multi-caméra** (plusieurs téléphones à angles différents,
    fusion des vues pour plus de précision — d'abord une moyenne pondérée
    par confiance, triangulation calibrée en raffinement ultérieur si
