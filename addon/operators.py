@@ -416,15 +416,33 @@ ANATOMICAL_LIMITS_DEG = {
     "shin": (-140, 5, -5, 5, -10, 10),
     "head": (-60, 60, -60, 60, -50, 50),
     "jaw": (-5, 30, -5, 5, -5, 5),
+    # Doigts (index/middle/ring/pinky, segments 01/02/03 — voir
+    # hand_mapping.FINGER_LANDMARKS) : le segment 01 (MCP, à la base du
+    # doigt) a plus de liberté (flexion + léger écartement latéral,
+    # X/Z) ; les segments 02/03 (PIP/DIP) sont des charnières quasi
+    # pures (flexion seulement, X généreux, quasiment aucun mouvement
+    # latéral, Z serré) — un vrai doigt ne peut pas se tordre sur le
+    # côté à ces articulations. Le pouce (plus mobile, opposable) a des
+    # plages plus larges sur ses 3 segments (thumb.01/02/03).
+    "finger.01": (-10, 90, -5, 5, -20, 20),
+    "finger.02": (-10, 110, -5, 5, -5, 5),
+    "finger.03": (-10, 90, -5, 5, -5, 5),
+    "thumb.01": (-20, 70, -15, 15, -40, 40),
+    "thumb.02": (-15, 90, -10, 10, -15, 15),
+    "thumb.03": (-15, 80, -10, 10, -15, 15),
 }
+
+_FINGER_NAMES = {"thumb", "index", "middle", "ring", "pinky"}
 
 
 def _base_role_for_bone(bone_name: str, prefix: str, suffix: str) -> str | None:
     """Retourne le rôle de base (clé de ANATOMICAL_LIMITS_DEG) pour un nom
     d'os résolu, ex. "DEF-upper_arm.L-suffix" -> "upper_arm" (préfixe/
     suffixe retirés), "spine.002" -> "spine" (chaîne colonne vertébrale,
-    voir bone_mapping._spine_chain_bone_names). None si aucun rôle connu
-    ne correspond."""
+    voir bone_mapping._spine_chain_bone_names), "index.02.L" ->
+    "finger.02" (segment PIP, commun aux 4 doigts hors pouce),
+    "thumb.01.R" -> "thumb.01" (pouce traité à part, plus mobile). None
+    si aucun rôle connu ne correspond."""
     name = bone_name
     if prefix and name.startswith(prefix):
         name = name[len(prefix):]
@@ -434,16 +452,22 @@ def _base_role_for_bone(bone_name: str, prefix: str, suffix: str) -> str | None:
         return "spine"
     if name.endswith(".L") or name.endswith(".R"):
         name = name[:-2]
+    parts = name.split(".")
+    if len(parts) == 2 and parts[0] in _FINGER_NAMES and parts[1] in {"01", "02", "03"}:
+        finger_group = "thumb" if parts[0] == "thumb" else "finger"
+        return f"{finger_group}.{parts[1]}"
     return name if name in ANATOMICAL_LIMITS_DEG else None
 
 
 class MOCAP_OT_add_anatomical_limits(bpy.types.Operator):
     """Ajoute une contrainte "Limit Rotation" avec des plages anatomiques
-    par défaut à tous les os du corps/tête reconnus sur l'armature cible
-    (colonne vertébrale, épaules, bras, jambes, tête, mâchoire) — empêche
-    les déformations extrêmes (un membre qui part dans une direction
-    impossible, mesh qui s'étire) causées par un glitch ponctuel de
-    tracking (landmark bruité ou mal détecté). S'applique par-dessus ce
+    par défaut à tous les os du corps/tête/doigts reconnus sur
+    l'armature cible (colonne vertébrale, épaules, bras, jambes, tête,
+    mâchoire, doigts — MCP/PIP/DIP par segment, pouce traité à part) —
+    empêche les déformations extrêmes (un membre ou un doigt qui part
+    dans une direction impossible, mesh qui s'étire) causées par un
+    glitch ponctuel de tracking (landmark bruité ou mal détecté).
+    S'applique par-dessus ce
     que la capture calcule, sans modifier le code de mapping. Remplace
     toute contrainte "Limit Rotation" déjà posée par ce bouton sur un os
     concerné plutôt que d'en empiler plusieurs (ré-exécuter est donc sûr).
