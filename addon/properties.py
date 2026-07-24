@@ -56,6 +56,18 @@ class MOCAP_Settings(bpy.types.PropertyGroup):
         max=65535,
     )
 
+    cartoon_intensity: bpy.props.FloatProperty(
+        name="Intensité",
+        description=(
+            "0 = aucun effet. Contrôle à la fois l'amplification des mouvements, "
+            "le squash & stretch et l'accentuation du timing (voir addon/cartoon_style.py)"
+        ),
+        default=0.5,
+        min=0.0,
+        max=1.0,
+        subtype="FACTOR",
+    )
+
     is_connected: bpy.props.BoolProperty(default=False)
     is_recording: bpy.props.BoolProperty(default=False)
     status_message: bpy.props.StringProperty(default="Non connecté")

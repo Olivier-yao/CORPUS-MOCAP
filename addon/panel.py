@@ -86,6 +86,14 @@ class VIEW3D_PT_corpus_mocap(bpy.types.Panel):
 
         layout.label(text=settings.status_message)
 
+        cartoon_box = layout.box()
+        cartoon_box.label(text="Style cartoon (post-traitement, optionnel)", icon="MOD_NOISE")
+        cartoon_box.prop(settings, "cartoon_intensity")
+        cartoon_box.operator(
+            "mocap.apply_cartoon_style", text="Appliquer le style cartoon", icon="MOD_NOISE"
+        )
+        cartoon_box.label(text="Crée une copie de l'Action, jamais destructif", icon="INFO")
+
 
 CLASSES = (VIEW3D_PT_corpus_mocap,)
 

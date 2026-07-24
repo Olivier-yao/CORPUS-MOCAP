@@ -11,7 +11,7 @@ import math
 
 import bpy
 
-from . import bone_mapping, character_builder, face_mapping, hand_mapping
+from . import bone_mapping, cartoon_style, character_builder, face_mapping, hand_mapping
 from .socket_client import MocapSocketClient, SocketClientError
 
 
@@ -756,6 +756,51 @@ class MOCAP_OT_build_rig_from_points(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MOCAP_OT_apply_cartoon_style(bpy.types.Operator):
+    """Cahier des charges, Module 4 : post-traite l'Action actuellement
+    assignée à l'armature cible (et, si un mesh visage est ciblé et animé,
+    sa propre Action de shape keys) — amplification des mouvements,
+    squash & stretch sur les os principaux (colonne, bras, jambes),
+    timing accentué (easing). Intensité pilotée par le curseur
+    "Intensité" du panneau (0 = aucun effet). Voir addon/cartoon_style.py.
+
+    Ne modifie JAMAIS l'Action d'origine : crée une copie ("..._Cartoon")
+    et l'assigne comme Action active — la capture brute reste intacte,
+    retrouvable dans l'Action Editor. Chaque clic repart de l'Action
+    actuellement active : pour tester plusieurs intensités sans composer
+    les effets, ré-assignez la capture brute comme Action active avant
+    de recliquer (Action Editor)."""
+
+    bl_idname = "mocap.apply_cartoon_style"
+    bl_label = "Appliquer le style cartoon"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        settings = context.scene.corpus_mocap
+        armature_obj = settings.target_armature
+        return (
+            not settings.is_recording
+            and armature_obj is not None
+            and armature_obj.animation_data is not None
+            and armature_obj.animation_data.action is not None
+        )
+
+    def execute(self, context):
+        settings = context.scene.corpus_mocap
+        body_action, face_action = cartoon_style.apply_cartoon_style(
+            settings.target_armature, settings.target_face_mesh, settings.cartoon_intensity
+        )
+
+        names = [a.name for a in (body_action, face_action) if a is not None]
+        self.report(
+            {'INFO'},
+            f"Style cartoon appliqué (intensité {settings.cartoon_intensity:.2f}) — "
+            f"nouvelle(s) Action(s) : {', '.join(names)}.",
+        )
+        return {'FINISHED'}
+
+
 CLASSES = (
     MOCAP_OT_toggle_capture,
     MOCAP_OT_reset_rig,
@@ -767,6 +812,7 @@ CLASSES = (
     MOCAP_OT_generate_rig_for_mesh,
     MOCAP_OT_generate_reference_points,
     MOCAP_OT_build_rig_from_points,
+    MOCAP_OT_apply_cartoon_style,
 )
 
 

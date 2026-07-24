@@ -201,6 +201,18 @@ Trois options, selon votre cas :
    mains) et, si un mesh visage était sélectionné, `CORPUS_MOCAP_Face_Take`
    (sur le datablock Key du mesh) sont créées avec les keyframes de la
    prise, sur la même timeline.
+8. **Optionnel — Style cartoon** (cahier des charges Module 4) : réglez le
+   curseur **Intensité** (0 = aucun effet) puis cliquez **"Appliquer le
+   style cartoon"** — amplifie les mouvements, ajoute du squash & stretch
+   sur les os principaux (colonne, bras, jambes — échelle dynamique selon
+   la vitesse du mouvement) et accentue le timing (easing). **Jamais
+   destructif** : crée une copie de l'Action (`..._Cartoon`) et l'assigne
+   comme Action active, la capture brute reste intacte et retrouvable
+   dans l'Action Editor. Cliquer plusieurs fois avec des intensités
+   différentes crée une nouvelle copie à chaque fois (pas de composition
+   d'effets) tant que la capture brute reste l'Action active au moment du
+   clic — si vous repartez d'une version déjà stylisée, ré-assignez la
+   capture brute avant de recliquer. Voir `addon/cartoon_style.py`.
 
 ## Limites connues
 
@@ -444,6 +456,17 @@ Trois options, selon votre cas :
   (MediaPipe perd la capacité à distinguer les membres superposés à
   l'écran), pas quelque chose de corrigible par le mapping — voir la
   Phase 5 (multi-caméra) sur la feuille de route ci-dessous.
+- **Style cartoon** (`addon/cartoon_style.py`) : constantes empiriques
+  (`AMPLIFICATION_MAX`, `SQUASH_STRETCH_VELOCITY_DEG_PER_FRAME`,
+  `SQUASH_STRETCH_MAX`, `EASING_MIN/MAX_HANDLE_FRACTION`), non testées en
+  conditions réelles (validées uniquement par script autonome sur la
+  logique mathématique — amplification/clamp de quaternion, mapping
+  vitesse→étirement avec préservation approximative du volume). Le
+  squash & stretch ne s'applique qu'aux os "principaux" (colonne, bras,
+  jambes — `SQUASH_STRETCH_BONE_PREFIXES`), pas aux mains/doigts ni au
+  visage. Le easing (poignées bezier) peut nécessiter un réglage plus
+  fin après un premier test visuel — à ajuster comme les autres
+  constantes empiriques du projet si le rendu ne convient pas.
 
 ## Feuille de route
 
@@ -469,7 +492,9 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
    réellement piloté par la capture. Point de départ à ajuster
    manuellement, pas un rig fini.
 6. **Phase 3 — Stylisation cartoon** (post-traitement F-Curves : squash &
-   stretch, amplification, timing) : pas commencé.
+   stretch, amplification, timing) : ✅ fait (`addon/cartoon_style.py`,
+   bouton "Appliquer le style cartoon") — voir Utilisation et Limites
+   connues.
 7. **Phase 4 — Compagnon mobile** (un téléphone comme source, via
    WebSocket local, même pipeline que la webcam PC) : pas commencé.
 8. **Phase 5 — Multi-caméra** (plusieurs téléphones à angles différents,
