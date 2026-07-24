@@ -14,6 +14,12 @@ class VIEW3D_PT_corpus_mocap(bpy.types.Panel):
         layout = self.layout
         settings = context.scene.corpus_mocap
 
+        layout.operator(
+            "mocap.generate_base_character",
+            text="Générer un personnage de base",
+            icon="OUTLINER_OB_ARMATURE",
+        )
+
         layout.prop(settings, "target_armature")
         layout.prop(settings, "target_face_mesh")
 

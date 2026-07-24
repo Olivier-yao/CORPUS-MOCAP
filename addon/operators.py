@@ -11,7 +11,7 @@ import math
 
 import bpy
 
-from . import bone_mapping, face_mapping, hand_mapping
+from . import bone_mapping, character_builder, face_mapping, hand_mapping
 from .socket_client import MocapSocketClient, SocketClientError
 
 
@@ -141,22 +141,27 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
 
         if face_msg is not None:
             head_rotation = face_msg.get("head_rotation")
+            blendshapes = face_msg.get("blendshapes") or {}
+
             if head_rotation is not None:
                 face_mapping.apply_head_rotation(session.armature, head_rotation, prefix, suffix)
-                head_bone_name = bone_mapping.resolve_bone_name(face_mapping.HEAD_BONE_NAME, prefix, suffix)
-                head_bone = session.armature.pose.bones.get(head_bone_name)
-                if head_bone is not None:
-                    head_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+            if blendshapes:
+                face_mapping.apply_jaw(session.armature, blendshapes, prefix, suffix)
+                face_mapping.apply_eyebrows(session.armature, blendshapes, prefix, suffix)
 
-            if session.face_mesh is not None:
-                blendshapes = face_msg.get("blendshapes") or {}
-                if blendshapes:
-                    face_mapping.apply_blendshapes(session.face_mesh, blendshapes)
-                    key_blocks = session.face_mesh.data.shape_keys.key_blocks
-                    for name in blendshapes:
-                        key_block = key_blocks.get(name)
-                        if key_block is not None:
-                            key_block.keyframe_insert(data_path="value", frame=frame)
+            if head_rotation is not None or blendshapes:
+                for bone_name, data_path in face_mapping.keyframeable_bone_names(prefix, suffix):
+                    pose_bone = session.armature.pose.bones.get(bone_name)
+                    if pose_bone is not None:
+                        pose_bone.keyframe_insert(data_path=data_path, frame=frame)
+
+            if session.face_mesh is not None and blendshapes:
+                face_mapping.apply_blendshapes(session.face_mesh, blendshapes)
+                key_blocks = session.face_mesh.data.shape_keys.key_blocks
+                for name in blendshapes:
+                    key_block = key_blocks.get(name)
+                    if key_block is not None:
+                        key_block.keyframe_insert(data_path="value", frame=frame)
 
         if hands_msg is not None:
             hands = hands_msg.get("hands") or {}
@@ -259,7 +264,7 @@ def _all_expected_roles() -> list[str]:
     suffixe) que CORPUS-MOCAP sait animer — corps, tête, main gauche,
     main droite."""
     roles = list(bone_mapping.get_animated_bone_names())
-    roles.append(face_mapping.HEAD_BONE_NAME)
+    roles.extend(face_mapping.get_animated_bone_names())
     roles.extend(hand_mapping.get_animated_bone_names("L"))
     roles.extend(hand_mapping.get_animated_bone_names("R"))
     return roles
@@ -377,12 +382,44 @@ class MOCAP_OT_add_wrist_rotation_limit(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MOCAP_OT_generate_base_character(bpy.types.Operator):
+    """Génère un personnage de base (armature + mesh humanoïde skinné +
+    shape keys ARKit + bones faciaux jaw/eyebrow.L/R), déjà nommé selon
+    la convention CORPUS-MOCAP et prêt à capturer — voir
+    addon/character_builder.py. Point de départ à sculpter/personnaliser
+    ensuite (Edit Mode, Sculpt Mode, Weight Paint pour affiner les
+    poids). Ré-exécuter ce bouton supprime et recrée entièrement l'objet
+    "CORPUS_MOCAP_Character" (et son mesh) : ne pas l'utiliser pour
+    régénérer un personnage déjà personnalisé, sous peine de perdre les
+    modifications."""
+
+    bl_idname = "mocap.generate_base_character"
+    bl_label = "Générer un personnage de base"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        armature_obj, mesh_obj = character_builder.generate()
+
+        settings = context.scene.corpus_mocap
+        settings.target_armature = armature_obj
+        settings.target_face_mesh = mesh_obj
+
+        self.report(
+            {'INFO'},
+            f"Personnage '{armature_obj.name}' généré et assigné comme cibles "
+            "(corps + visage) — sculptez-le à votre convenance sans renommer "
+            "les os ni les shape keys.",
+        )
+        return {'FINISHED'}
+
+
 CLASSES = (
     MOCAP_OT_toggle_capture,
     MOCAP_OT_reset_rig,
     MOCAP_OT_apply_bone_affixes,
     MOCAP_OT_interactive_bone_mapping,
     MOCAP_OT_add_wrist_rotation_limit,
+    MOCAP_OT_generate_base_character,
 )
 
 

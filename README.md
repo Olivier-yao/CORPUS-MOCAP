@@ -80,19 +80,31 @@ Le tracking mains peut être désactivé avec `python server.py --no-hands`.
 
 ### 5. Rig, visage et mains de test
 
-Si vous n'avez pas encore de personnage rigué, générez le tout, **dans
-cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
+Deux options :
 
-1. Ouvrir Blender, onglet **Scripting**.
-2. Ouvrir `tools/generate_test_rig.py`, cliquer **Run Script** → armature
-   `CORPUS_MOCAP_TestRig` (T-pose).
-3. Ouvrir `tools/generate_test_hands.py`, cliquer **Run Script** → ajoute
-   les bones de doigts (`thumb.01.L`, `index.02.R`, etc.) à cette même
-   armature.
-4. Ouvrir `tools/generate_test_face.py`, cliquer **Run Script** → mesh
-   `CORPUS_MOCAP_TestFace` (sphère à 10 shape keys nommées selon la
-   convention ARKit : `jawOpen`, `eyeBlinkLeft`, `mouthSmileLeft`, etc.),
-   attaché au bone "head" du rig.
+- **Recommandé** : une fois l'addon installé (étape 6 ci-dessous), bouton
+  **"Générer un personnage de base"** en haut du panneau CORPUS-MOCAP —
+  génère en un clic une armature humanoïde skinnée (poids automatiques) +
+  un mesh (corps + tête) + les shape keys ARKit + les bones faciaux
+  `jaw`/`eyebrow.L/R`, le tout nommé selon la convention attendue et déjà
+  assigné comme cibles. Géométrie volontairement grossière (cylindres +
+  sphère) : un point de départ à sculpter/redessiner ensuite (Edit Mode /
+  Sculpt Mode / Weight Paint) **sans renommer les os ni les shape keys**
+  pour rester compatible avec la capture. Voir `addon/character_builder.py`.
+  Ré-exécuter ce bouton supprime et recrée entièrement le personnage — ne
+  pas l'utiliser pour régénérer un personnage déjà sculpté/personnalisé.
+- **Scripts séparés** (utile pour valider le pipeline sans mesh, ou avant
+  que l'addon ne soit installé) : dans Blender, onglet **Scripting**,
+  **dans cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
+  1. `tools/generate_test_rig.py`, **Run Script** → armature
+     `CORPUS_MOCAP_TestRig` (T-pose, sans mesh).
+  2. `tools/generate_test_hands.py`, **Run Script** → ajoute les bones de
+     doigts (`thumb.01.L`, `index.02.R`, etc.) à cette même armature.
+  3. `tools/generate_test_face.py`, **Run Script** → mesh
+     `CORPUS_MOCAP_TestFace` (sphère à 10 shape keys ARKit : `jawOpen`,
+     `eyeBlinkLeft`, `mouthSmileLeft`, etc.), attaché au bone "head" du rig
+     — ne crée pas les bones `jaw`/`eyebrow.L/R` (propres au générateur
+     intégré ci-dessus).
 
 ### 6. Addon
 
@@ -201,8 +213,21 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
   mapping manuel dans l'UI pour l'instant) : fonctionne directement si le
   mesh a des shape keys nommées selon la convention ARKit, sinon les
   coefficients concernés sont simplement ignorés. Pour un rig facial à
-  bones (pas à shape keys), voir la note dans `addon/face_mapping.py` sur
-  le pattern recommandé (custom properties + drivers posés côté rig).
+  bones plus complet que jaw/eyebrow.L/R (voir ci-dessous), voir la note
+  dans `addon/face_mapping.py` sur le pattern recommandé (custom
+  properties + drivers posés côté rig).
+- **Mâchoire et sourcils par bones** (`jaw`, `eyebrow.L/R`) : nouveau,
+  complémentaire aux shape keys — `jaw` tourne (ouverture/fermeture,
+  coefficient `jawOpen`) et `eyebrow.L/R` se translatent (hausse/baisse,
+  `browInnerUp`/`browOuterUpLeft/Right`/`browDownLeft/Right`) sur simple
+  rotation/translation locale (pas de conjugaison par la pose de tête
+  courante — voir `face_mapping.apply_jaw`/`apply_eyebrows`). Généré
+  automatiquement par le bouton "Générer un personnage de base"
+  (`addon/character_builder.py`) ; sur un rig personnalisé, ajoutez ces
+  bones vous-même (ou associez vos propres bones à ces noms via "Associer
+  les os par clic") pour en bénéficier. Volontairement exclus des shape
+  keys générées (pas de double animation de la même zone par deux
+  mécanismes) — à revalider en conditions réelles.
 - Rotation de tête (`facial_transformation_matrixes` → bone "head") :
   mapping d'axes empirique (`addon/face_mapping.py`, `_MP_TO_RIG`), pas
   formellement documenté par MediaPipe — à vérifier/ajuster si un axe
@@ -259,11 +284,15 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
    ex. pour un rig Rigify `DEF-upper_arm.L` — cahier des charges §7) :
    ✅ fait (préfixe/suffixe global uniquement, pas de remapping par bone
    individuel — voir limites connues).
-5. **Phase 3 — Stylisation cartoon** (post-traitement F-Curves : squash &
+5. **Générateur de personnage de base intégré** (armature+mesh skinné+
+   shape keys ARKit+bones faciaux jaw/eyebrow.L/R, bouton du panneau) :
+   ✅ fait (`addon/character_builder.py`) — point de départ à sculpter
+   manuellement, pas un personnage fini.
+6. **Phase 3 — Stylisation cartoon** (post-traitement F-Curves : squash &
    stretch, amplification, timing) : pas commencé.
-6. **Phase 4 — Compagnon mobile** (un téléphone comme source, via
+7. **Phase 4 — Compagnon mobile** (un téléphone comme source, via
    WebSocket local, même pipeline que la webcam PC) : pas commencé.
-7. **Phase 5 — Multi-caméra** (plusieurs téléphones à angles différents,
+8. **Phase 5 — Multi-caméra** (plusieurs téléphones à angles différents,
    fusion des vues pour plus de précision — d'abord une moyenne pondérée
    par confiance, triangulation calibrée en raffinement ultérieur si
    besoin) : pas commencé, conception détaillée à faire le moment venu.

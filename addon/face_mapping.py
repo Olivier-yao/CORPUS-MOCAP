@@ -21,12 +21,33 @@ changement mineur si ce pattern est retenu.
 
 from __future__ import annotations
 
-import bpy
-from mathutils import Matrix
+import math
 
-from .bone_mapping import resolve_bone_name
+import bpy
+from mathutils import Matrix, Quaternion, Vector
+
+from .bone_mapping import bone_rest_world_rot, resolve_bone_name
 
 HEAD_BONE_NAME = "head"
+
+# Bones faciaux optionnels (voir addon/character_builder.py pour un
+# générateur qui les crée déjà nommés/positionnés correctement) : s'ils
+# sont absents du rig cible, apply_jaw/apply_eyebrows ne font rien
+# silencieusement (comme le reste du mapping face aux bones manquants).
+JAW_BONE_NAME = "jaw"
+EYEBROW_BONE_NAMES = {"L": "eyebrow.L", "R": "eyebrow.R"}
+
+# Angle max d'ouverture de la mâchoire (rotation locale autour de l'axe X
+# du bone jaw) pour un coefficient "jawOpen" ARKit à 1.0. Signe empirique
+# (comme _MP_TO_RIG plus bas) — à inverser si la mâchoire s'ouvre vers le
+# haut au lieu du bas sur votre rig.
+JAW_OPEN_MAX_ANGLE = math.radians(25.0)
+
+# Déplacement max (mètres, échelle du personnage généré par
+# character_builder.py) d'un sourcil le long de l'axe Y local de son bone
+# (axe de visée figé au repos, voir bone_rest_world_rot) pour un signal
+# de hausse des sourcils à pleine intensité.
+EYEBROW_MAX_OFFSET = 0.02
 
 # Change de repère MediaPipe (X droite, Y haut, Z vers la caméra/viewer) ->
 # repère du rig (X droite, Y devant soi, Z haut) : les deux étant des
@@ -67,13 +88,7 @@ def apply_head_rotation(
 
     bone = pose_bone.bone
     try:
-        if pose_bone.parent is not None:
-            parent_world_rot = pose_bone.parent.matrix.to_3x3()
-            rest_local_rot = (pose_bone.parent.bone.matrix_local.inverted() @ bone.matrix_local).to_3x3()
-        else:
-            parent_world_rot = armature_obj.matrix_world.to_3x3()
-            rest_local_rot = bone.matrix_local.to_3x3()
-        rest_world_rot = parent_world_rot @ rest_local_rot
+        rest_world_rot = bone_rest_world_rot(pose_bone, armature_obj)
 
         r_mp = Matrix((tuple(rotation_9[0:3]), tuple(rotation_9[3:6]), tuple(rotation_9[6:9])))
         r_rig = _MP_TO_RIG @ r_mp @ _MP_TO_RIG.transposed()
@@ -85,6 +100,61 @@ def apply_head_rotation(
 
     pose_bone.rotation_mode = "QUATERNION"
     pose_bone.rotation_quaternion = local_rot.to_quaternion()
+
+
+def apply_jaw(armature_obj: bpy.types.Object, blendshapes: dict[str, float], prefix: str = "", suffix: str = "") -> None:
+    """Ouvre/ferme la mâchoire (bone "jaw") par rotation locale autour de
+    son axe X, à partir du coefficient ARKit "jawOpen" (0-1). Rotation
+    locale directe (pas de conjugaison par bone_rest_world_rot) : le sens
+    d'ouverture dépend uniquement de l'orientation de repos du bone jaw
+    telle que construite par character_builder.py (tête vers l'arrière,
+    queue vers l'avant-bas), pas de la pose courante de la tête."""
+    pose_bone = armature_obj.pose.bones.get(resolve_bone_name(JAW_BONE_NAME, prefix, suffix))
+    if pose_bone is None:
+        return
+    open_amount = max(0.0, min(1.0, blendshapes.get("jawOpen", 0.0)))
+    angle = JAW_OPEN_MAX_ANGLE * open_amount
+    pose_bone.rotation_mode = "QUATERNION"
+    pose_bone.rotation_quaternion = Quaternion((1.0, 0.0, 0.0), -angle)
+
+
+def apply_eyebrows(armature_obj: bpy.types.Object, blendshapes: dict[str, float], prefix: str = "", suffix: str = "") -> None:
+    """Hausse/abaisse les sourcils (bones "eyebrow.L/R") par translation
+    le long de leur axe Y local (figé à leur orientation de repos, comme
+    la torsion du poignet dans hand_mapping.py — évite de dépendre d'une
+    conjugaison par la pose courante de la tête pour un mouvement aussi
+    simple). Combine les coefficients ARKit de hausse (browInnerUp,
+    browOuterUpLeft/Right) et de baisse (browDownLeft/Right) par côté."""
+    inner_up = blendshapes.get("browInnerUp", 0.0)
+    raises = {
+        "L": max(inner_up, blendshapes.get("browOuterUpLeft", 0.0)) - blendshapes.get("browDownLeft", 0.0),
+        "R": max(inner_up, blendshapes.get("browOuterUpRight", 0.0)) - blendshapes.get("browDownRight", 0.0),
+    }
+    for side, raise_amount in raises.items():
+        pose_bone = armature_obj.pose.bones.get(resolve_bone_name(EYEBROW_BONE_NAMES[side], prefix, suffix))
+        if pose_bone is None:
+            continue
+        clamped = max(-1.0, min(1.0, raise_amount))
+        pose_bone.location = Vector((0.0, clamped * EYEBROW_MAX_OFFSET, 0.0))
+
+
+def keyframeable_bone_names(prefix: str = "", suffix: str = "") -> list[tuple[str, str]]:
+    """Liste (nom d'os résolu, data_path) pour tous les os faciaux animés
+    par ce module — utilisé pour l'insertion de keyframes pendant
+    l'enregistrement (voir MOCAP_OT_toggle_capture dans operators.py)."""
+    result = [
+        (resolve_bone_name(HEAD_BONE_NAME, prefix, suffix), "rotation_quaternion"),
+        (resolve_bone_name(JAW_BONE_NAME, prefix, suffix), "rotation_quaternion"),
+    ]
+    for name in EYEBROW_BONE_NAMES.values():
+        result.append((resolve_bone_name(name, prefix, suffix), "location"))
+    return result
+
+
+def get_animated_bone_names(prefix: str = "", suffix: str = "") -> list[str]:
+    """Noms résolus des os faciaux (tête + mâchoire + sourcils) — utilisé
+    par l'outil d'association interactive des os (operators.py)."""
+    return [name for name, _ in keyframeable_bone_names(prefix, suffix)]
 
 
 def apply_blendshapes(mesh_obj: bpy.types.Object, blendshapes: dict[str, float]) -> None:
