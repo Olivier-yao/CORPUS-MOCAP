@@ -341,10 +341,25 @@ Trois options, selon votre cas :
   `_apply_full_rotation`, `TORSO_TWIST_DAMPING`, non utilisés actuellement)
   mais a causé plusieurs régressions (position anormale au neutre, rig
   désarticulé) malgré plusieurs correctifs, impossible à valider
-  entièrement sans accès direct à Blender pour tester. `spine` utilise à
-  nouveau le simple "aim" (2 degrés de liberté, sans torsion) comme les
+  entièrement sans accès direct à Blender pour tester. `spine` utilise
+  toujours le simple "aim" (2 degrés de liberté, sans torsion) comme les
   autres membres. À reprendre plus tard avec plus de recul, idéalement
   avec de meilleures données de profondeur (Phase 5, multi-caméra).
+- **Colonne vertébrale à plusieurs segments** (`spine`, `spine.001`,
+  `spine.002`, ... — convention Rigify/Mixamo, cas le plus courant sur un
+  rig personnalisé) : détectée dynamiquement sur le rig cible
+  (`bone_mapping._spine_chain_bone_names`, aucune configuration
+  nécessaire) — un rig à 1 seul bone `spine` (comportement historique) ou
+  à N segments est piloté automatiquement. La MÊME direction cible
+  (bassin->épaules) est appliquée à chaque segment de la chaîne : la
+  colonne s'incline comme un bloc rigide (tous les segments parallèles),
+  pas une courbe en S répartie — volontairement simple pour éviter de
+  reproduire les régressions de la torsion buste/bassin ci-dessus. L'outil
+  "Associer les os par clic" propose désormais 3 rôles `spine`/
+  `spine.001`/`spine.002` par défaut (à passer avec `S` si votre rig en a
+  moins). Les générateurs intégrés (`character_builder.py`) créent
+  toujours un rig à 1 seul bone `spine` pour l'instant — non étendu à
+  plusieurs segments dans cette itération.
 - Occlusion (ex: bras croisés) : limite du tracking mono-caméra elle-même
   (MediaPipe perd la capacité à distinguer les membres superposés à
   l'écran), pas quelque chose de corrigible par le mapping — voir la

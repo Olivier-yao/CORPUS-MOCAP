@@ -131,7 +131,7 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
             if hips_bone is not None:
                 hips_bone.keyframe_insert(data_path="location", frame=frame)
 
-            for bone_name in bone_mapping.get_animated_bone_names(prefix, suffix):
+            for bone_name in bone_mapping.get_animated_bone_names(prefix, suffix, session.armature):
                 if bone_name == hips_bone_name:
                     continue
                 pose_bone = session.armature.pose.bones.get(bone_name)

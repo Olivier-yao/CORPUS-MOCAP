@@ -291,6 +291,36 @@ def _apply_full_rotation(
     pose_bone.rotation_quaternion = quat
 
 
+def _spine_chain_bone_names(prefix: str = "", suffix: str = "", pose_bones=None) -> list[str]:
+    """Noms résolus (avec préfixe/suffixe) de la chaîne colonne
+    vertébrale : "spine", puis "spine.001", "spine.002", ... tant qu'ils
+    existent (convention Rigify/Mixamo) — permet de piloter un rig à un
+    seul bone spine (comportement historique) ou à plusieurs segments
+    (le cas le plus courant, ex. 3) sans aucune configuration.
+
+    Si `pose_bones` est fourni (rig cible connu, capture en cours), la
+    présence de chaque segment est vérifiée dynamiquement sur CE rig et
+    la détection s'arrête au premier segment absent. Sinon (ex. l'outil
+    générique "Associer les os par clic", qui liste des rôles sans rig
+    précis en tête), retombe sur les 3 premiers segments (le cas le plus
+    courant) — à passer avec 'S' dans cet outil si le rig cible en a
+    moins."""
+    base = resolve_bone_name("spine", prefix, suffix)
+    if pose_bones is None:
+        return [base] + [resolve_bone_name(f"spine.{i:03d}", prefix, suffix) for i in (1, 2)]
+    if base not in pose_bones:
+        return []
+    names = [base]
+    i = 1
+    while True:
+        name = resolve_bone_name(f"spine.{i:03d}", prefix, suffix)
+        if name not in pose_bones:
+            break
+        names.append(name)
+        i += 1
+    return names
+
+
 def _torso_orientation_matrix(
     hip_center: Vector, shoulder_center: Vector, left_ref: Vector, right_ref: Vector
 ) -> Matrix | None:
@@ -377,8 +407,8 @@ def apply_pose(
         # l'essentiel de la torsion du corps ; le risque de régression sur
         # les jambes ne vaut pas le gain ici.
 
-    spine_bone = bone("spine")
-    if spine_bone is not None and hips_visible and shoulders_visible:
+    spine_chain = _spine_chain_bone_names(prefix, suffix, pose_bones)
+    if spine_chain and hips_visible and shoulders_visible:
         # Retour au simple "aim" (direction bassin->épaules, sans torsion) :
         # la version à 3 degrés de liberté (_torso_orientation_matrix,
         # toujours définie plus haut) a produit plusieurs régressions
@@ -387,10 +417,26 @@ def apply_pose(
         # conditions réelles. À reprendre plus tard avec plus de recul —
         # potentiellement avec de meilleures données de profondeur
         # (Phase 5, multi-caméra).
+        #
+        # Rigs à plusieurs segments (ex. spine/spine.001/spine.002,
+        # convention Rigify — voir _spine_chain_bone_names) : la MÊME
+        # direction cible est appliquée à chaque segment de la chaîne
+        # (au lieu de piloter uniquement "spine" et laisser les segments
+        # suivants figés à leur pose de repos). Chaque bone vise
+        # indépendamment cette direction dans son propre repère de repos
+        # *courant* (bone_rest_world_rot lit la matrice actuelle du
+        # parent, déjà mise à jour par le segment précédent) : le résultat
+        # est une colonne qui s'incline comme un seul bloc rigide, pas une
+        # courbe en S répartie — plus simple et plus sûr que de tenter une
+        # répartition pondérée, vu l'historique de régressions ci-dessus.
         spine_dir = shoulder_center - hip_center
         spine_dir.y *= SPINE_DEPTH_DAMPING
-        _aim_bone(spine_bone, spine_dir, armature_obj)
-        bpy.context.view_layer.update()
+        for spine_bone_name in spine_chain:
+            spine_bone = pose_bones.get(spine_bone_name)
+            if spine_bone is None:
+                continue
+            _aim_bone(spine_bone, spine_dir, armature_obj)
+            bpy.context.view_layer.update()
 
     if shoulders_visible:
         for clavicle_bone_name, shoulder_landmark_name in CLAVICLE_SEGMENTS:
@@ -416,9 +462,18 @@ def apply_pose(
     return hip_center
 
 
-def get_animated_bone_names(prefix: str = "", suffix: str = "") -> list[str]:
-    """Noms résolus des os affectés par apply_pose, pour l'insertion de keyframes."""
-    names = ["hips", "spine"]
-    names.extend(bone_name for bone_name, _ in CLAVICLE_SEGMENTS)
-    names.extend(bone_name for bone_name, _, _ in LIMB_SEGMENTS)
-    return [resolve_bone_name(name, prefix, suffix) for name in names]
+def get_animated_bone_names(
+    prefix: str = "", suffix: str = "", armature_obj: bpy.types.Object | None = None
+) -> list[str]:
+    """Noms résolus des os affectés par apply_pose, pour l'insertion de
+    keyframes (et pour lister les rôles attendus par l'outil "Associer
+    les os par clic", sans rig précis en tête). Passer `armature_obj`
+    (rig cible connu, capture en cours) pour détecter dynamiquement le
+    nombre réel de segments de la colonne vertébrale sur CE rig — voir
+    _spine_chain_bone_names."""
+    pose_bones = armature_obj.pose.bones if armature_obj is not None else None
+    names = [resolve_bone_name("hips", prefix, suffix)]
+    names.extend(_spine_chain_bone_names(prefix, suffix, pose_bones))
+    names.extend(resolve_bone_name(bone_name, prefix, suffix) for bone_name, _ in CLAVICLE_SEGMENTS)
+    names.extend(resolve_bone_name(bone_name, prefix, suffix) for bone_name, _, _ in LIMB_SEGMENTS)
+    return names
