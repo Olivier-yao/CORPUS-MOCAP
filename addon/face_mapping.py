@@ -35,7 +35,11 @@ HEAD_BONE_NAME = "head"
 # sont absents du rig cible, apply_jaw/apply_eyebrows ne font rien
 # silencieusement (comme le reste du mapping face aux bones manquants).
 JAW_BONE_NAME = "jaw"
-EYEBROW_BONE_NAMES = {"L": "eyebrow.L", "R": "eyebrow.R"}
+# brow.mid.L/R existent dans le rig généré (character_builder.py) mais ne
+# sont pas pilotés ici : aucun coefficient ARKit ne correspond à "milieu
+# du sourcil" isolément — bones de contrôle manuel uniquement.
+BROW_IN_BONE_NAMES = {"L": "brow.in.L", "R": "brow.in.R"}
+BROW_OUT_BONE_NAMES = {"L": "brow.out.L", "R": "brow.out.R"}
 
 # Angle max d'ouverture de la mâchoire (rotation locale autour de l'axe X
 # du bone jaw) pour un coefficient "jawOpen" ARKit à 1.0. Signe empirique
@@ -46,8 +50,8 @@ JAW_OPEN_MAX_ANGLE = math.radians(25.0)
 # Déplacement max (mètres, échelle du personnage généré par
 # character_builder.py) d'un sourcil le long de l'axe Y local de son bone
 # (axe de visée figé au repos, voir bone_rest_world_rot) pour un signal
-# de hausse des sourcils à pleine intensité.
-EYEBROW_MAX_OFFSET = 0.02
+# de hausse/baisse à pleine intensité.
+BROW_MAX_OFFSET = 0.015
 
 # Change de repère MediaPipe (X droite, Y haut, Z vers la caméra/viewer) ->
 # repère du rig (X droite, Y devant soi, Z haut) : les deux étant des
@@ -119,23 +123,28 @@ def apply_jaw(armature_obj: bpy.types.Object, blendshapes: dict[str, float], pre
 
 
 def apply_eyebrows(armature_obj: bpy.types.Object, blendshapes: dict[str, float], prefix: str = "", suffix: str = "") -> None:
-    """Hausse/abaisse les sourcils (bones "eyebrow.L/R") par translation
-    le long de leur axe Y local (figé à leur orientation de repos, comme
-    la torsion du poignet dans hand_mapping.py — évite de dépendre d'une
+    """Hausse/abaisse les sourcils par translation le long de l'axe Y
+    local de chaque bone (figé à son orientation de repos, comme la
+    torsion du poignet dans hand_mapping.py — évite de dépendre d'une
     conjugaison par la pose courante de la tête pour un mouvement aussi
-    simple). Combine les coefficients ARKit de hausse (browInnerUp,
-    browOuterUpLeft/Right) et de baisse (browDownLeft/Right) par côté."""
+    simple). Deux bones par côté, chacun sur son propre coefficient ARKit
+    (pas de fusion) : "brow.in.L/R" <- browInnerUp (même valeur des deux
+    côtés, ARKit ne le sépare pas par côté), "brow.out.L/R" <-
+    browOuterUpLeft/Right, tous deux réduits par browDownLeft/Right pour
+    la baisse. brow.mid.L/R n'est pas piloté (voir constantes ci-dessus)."""
     inner_up = blendshapes.get("browInnerUp", 0.0)
-    raises = {
-        "L": max(inner_up, blendshapes.get("browOuterUpLeft", 0.0)) - blendshapes.get("browDownLeft", 0.0),
-        "R": max(inner_up, blendshapes.get("browOuterUpRight", 0.0)) - blendshapes.get("browDownRight", 0.0),
+    values = {
+        (BROW_IN_BONE_NAMES, "L"): inner_up - blendshapes.get("browDownLeft", 0.0),
+        (BROW_IN_BONE_NAMES, "R"): inner_up - blendshapes.get("browDownRight", 0.0),
+        (BROW_OUT_BONE_NAMES, "L"): blendshapes.get("browOuterUpLeft", 0.0) - blendshapes.get("browDownLeft", 0.0),
+        (BROW_OUT_BONE_NAMES, "R"): blendshapes.get("browOuterUpRight", 0.0) - blendshapes.get("browDownRight", 0.0),
     }
-    for side, raise_amount in raises.items():
-        pose_bone = armature_obj.pose.bones.get(resolve_bone_name(EYEBROW_BONE_NAMES[side], prefix, suffix))
+    for (bone_names, side), raw_value in values.items():
+        pose_bone = armature_obj.pose.bones.get(resolve_bone_name(bone_names[side], prefix, suffix))
         if pose_bone is None:
             continue
-        clamped = max(-1.0, min(1.0, raise_amount))
-        pose_bone.location = Vector((0.0, clamped * EYEBROW_MAX_OFFSET, 0.0))
+        clamped = max(-1.0, min(1.0, raw_value))
+        pose_bone.location = Vector((0.0, clamped * BROW_MAX_OFFSET, 0.0))
 
 
 def keyframeable_bone_names(prefix: str = "", suffix: str = "") -> list[tuple[str, str]]:
@@ -146,7 +155,7 @@ def keyframeable_bone_names(prefix: str = "", suffix: str = "") -> list[tuple[st
         (resolve_bone_name(HEAD_BONE_NAME, prefix, suffix), "rotation_quaternion"),
         (resolve_bone_name(JAW_BONE_NAME, prefix, suffix), "rotation_quaternion"),
     ]
-    for name in EYEBROW_BONE_NAMES.values():
+    for name in list(BROW_IN_BONE_NAMES.values()) + list(BROW_OUT_BONE_NAMES.values()):
         result.append((resolve_bone_name(name, prefix, suffix), "location"))
     return result
 

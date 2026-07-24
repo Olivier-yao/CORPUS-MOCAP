@@ -19,6 +19,13 @@ class VIEW3D_PT_corpus_mocap(bpy.types.Panel):
             text="Générer un personnage de base",
             icon="OUTLINER_OB_ARMATURE",
         )
+        layout.operator(
+            "mocap.generate_rig_for_mesh",
+            text="Générer un rig pour le modèle sélectionné",
+            icon="ARMATURE_DATA",
+        )
+        if context.active_object is None or context.active_object.type != 'MESH':
+            layout.label(text="(sélectionnez votre mesh pour ce bouton)", icon="INFO")
 
         layout.prop(settings, "target_armature")
         layout.prop(settings, "target_face_mesh")

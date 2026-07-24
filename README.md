@@ -80,19 +80,36 @@ Le tracking mains peut être désactivé avec `python server.py --no-hands`.
 
 ### 5. Rig, visage et mains de test
 
-Deux options :
+Trois options, selon votre cas :
 
-- **Recommandé** : une fois l'addon installé (étape 6 ci-dessous), bouton
-  **"Générer un personnage de base"** en haut du panneau CORPUS-MOCAP —
-  génère en un clic une armature humanoïde skinnée (poids automatiques) +
-  un mesh (corps + tête) + les shape keys ARKit + les bones faciaux
-  `jaw`/`eyebrow.L/R`, le tout nommé selon la convention attendue et déjà
-  assigné comme cibles. Géométrie volontairement grossière (cylindres +
-  sphère) : un point de départ à sculpter/redessiner ensuite (Edit Mode /
-  Sculpt Mode / Weight Paint) **sans renommer les os ni les shape keys**
-  pour rester compatible avec la capture. Voir `addon/character_builder.py`.
-  Ré-exécuter ce bouton supprime et recrée entièrement le personnage — ne
-  pas l'utiliser pour régénérer un personnage déjà sculpté/personnalisé.
+- **Vous avez déjà un modèle 3D personnel** (recommandé dans ce cas) :
+  une fois l'addon installé (étape 6 ci-dessous), sélectionnez votre mesh
+  dans la scène puis bouton **"Générer un rig pour le modèle
+  sélectionné"** en haut du panneau CORPUS-MOCAP — génère **uniquement
+  une armature** (aucun mesh créé), mise à l'échelle et positionnée pour
+  approcher la taille/position de votre modèle (calée sur sa boîte
+  englobante). Comme pour un meta-rig Rigify : c'est une base
+  approximative, pas un alignement précis — repositionnez ensuite chaque
+  os à la main (Edit Mode) sur les articulations réelles de votre modèle
+  (yeux, coins de bouche, coudes, etc.) pour affiner, puis skinnez le
+  mesh vous-même (Ctrl+P > **Armature Deform**, poids automatiques ou à
+  la main) — cette étape reste manuelle, comme pour n'importe quel rig.
+  Inclut un set de bones faciaux "intermédiaire" (~28 os : yeux,
+  paupières, sourcils en 3 points par côté, nez, joues, mâchoire, menton,
+  coins de bouche, lèvres, oreilles — voir Limites connues). Voir
+  `addon/character_builder.py:generate_rig_for_mesh`.
+- **Vous n'avez pas encore de modèle, testez le pipeline** : bouton
+  **"Générer un personnage de base"** — génère en un clic une armature
+  humanoïde skinnée (poids automatiques) + un mesh (corps + tête) + les
+  shape keys ARKit + les mêmes bones faciaux, le tout nommé selon la
+  convention attendue et déjà assigné comme cibles. Géométrie
+  volontairement grossière (cylindres + sphère) : un point de départ à
+  sculpter/redessiner ensuite (Edit Mode / Sculpt Mode / Weight Paint)
+  **sans renommer les os ni les shape keys** pour rester compatible avec
+  la capture. Voir `addon/character_builder.py:generate`.
+  Ré-exécuter l'un ou l'autre de ces deux boutons supprime et recrée
+  entièrement l'armature (et le mesh pour "personnage de base") du même
+  nom — ne pas les utiliser pour régénérer un rig déjà ajusté/personnalisé.
 - **Scripts séparés** (utile pour valider le pipeline sans mesh, ou avant
   que l'addon ne soit installé) : dans Blender, onglet **Scripting**,
   **dans cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
@@ -213,21 +230,38 @@ Deux options :
   mapping manuel dans l'UI pour l'instant) : fonctionne directement si le
   mesh a des shape keys nommées selon la convention ARKit, sinon les
   coefficients concernés sont simplement ignorés. Pour un rig facial à
-  bones plus complet que jaw/eyebrow.L/R (voir ci-dessous), voir la note
-  dans `addon/face_mapping.py` sur le pattern recommandé (custom
-  properties + drivers posés côté rig).
-- **Mâchoire et sourcils par bones** (`jaw`, `eyebrow.L/R`) : nouveau,
-  complémentaire aux shape keys — `jaw` tourne (ouverture/fermeture,
-  coefficient `jawOpen`) et `eyebrow.L/R` se translatent (hausse/baisse,
-  `browInnerUp`/`browOuterUpLeft/Right`/`browDownLeft/Right`) sur simple
-  rotation/translation locale (pas de conjugaison par la pose de tête
-  courante — voir `face_mapping.apply_jaw`/`apply_eyebrows`). Généré
-  automatiquement par le bouton "Générer un personnage de base"
-  (`addon/character_builder.py`) ; sur un rig personnalisé, ajoutez ces
-  bones vous-même (ou associez vos propres bones à ces noms via "Associer
-  les os par clic") pour en bénéficier. Volontairement exclus des shape
-  keys générées (pas de double animation de la même zone par deux
+  bones encore plus complet que celui décrit ci-dessous (paupières/lèvres
+  en plusieurs segments, langue, dents...), voir la note dans
+  `addon/face_mapping.py` sur le pattern recommandé (custom properties +
+  drivers posés côté rig).
+- **Set de bones faciaux "intermédiaire"** (~28 os, généré par
+  `addon/character_builder.py` — boutons "Générer un personnage de base"
+  et "Générer un rig pour le modèle sélectionné") : `jaw`/`chin`,
+  `eye.L/R`, `lid.T/B.L/R`, `brow.in/mid/out.L/R`, `nose`/`nose.tip`,
+  `cheek.L/R`, `mouth.corner.L/R`, `lip.T`/`lip.T.L/R`,
+  `lip.B`/`lip.B.L/R`, `ear.L/R`. **Seule une partie est réellement
+  pilotée par la capture** (voir `face_mapping.py`) : `jaw` (rotation,
+  `jawOpen`) et `brow.in/out.L/R` (translation,
+  `browInnerUp`/`browOuterUpLeft/Right`/`browDownLeft/Right` —
+  `brow.mid.L/R` n'a pas d'équivalent ARKit isolé, non piloté). Les
+  autres (`eye.*`, `lid.*`, `nose*`, `cheek.*`, `chin`, `mouth.corner.*`,
+  `lip.*`, `ear.*`) sont des bones de contrôle présents pour l'animation
+  manuelle et une extension future du mapping, **pas encore pilotés par
+  MediaPipe**. Rotation/translation locale directe, sans conjugaison par
+  la pose de tête courante (voir `face_mapping.apply_jaw`/
+  `apply_eyebrows`). Sur un rig personnalisé, ajoutez ces bones vous-même
+  (ou associez vos propres bones à ces noms via "Associer les os par
+  clic") pour bénéficier du sous-ensemble piloté. `jaw`/`brow.in/out.L/R`
+  volontairement exclus des shape keys générées par "Générer un
+  personnage de base" (pas de double animation de la même zone par deux
   mécanismes) — à revalider en conditions réelles.
+- **"Générer un rig pour le modèle sélectionné"** : la mise à l'échelle
+  (`character_builder.compute_fit_transform`) est une approximation
+  grossière basée uniquement sur la hauteur (boîte englobante monde du
+  mesh, axe Z) et un centrage horizontal — pas de détection des
+  articulations réelles du modèle (yeux, coudes, etc.), le repositionnement
+  précis de chaque os reste entièrement manuel (Edit Mode), comme pour un
+  meta-rig Rigify. Ne skinne jamais le mesh cible automatiquement.
 - Rotation de tête (`facial_transformation_matrixes` → bone "head") :
   mapping d'axes empirique (`addon/face_mapping.py`, `_MP_TO_RIG`), pas
   formellement documenté par MediaPipe — à vérifier/ajuster si un axe
@@ -284,10 +318,14 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
    ex. pour un rig Rigify `DEF-upper_arm.L` — cahier des charges §7) :
    ✅ fait (préfixe/suffixe global uniquement, pas de remapping par bone
    individuel — voir limites connues).
-5. **Générateur de personnage de base intégré** (armature+mesh skinné+
-   shape keys ARKit+bones faciaux jaw/eyebrow.L/R, bouton du panneau) :
-   ✅ fait (`addon/character_builder.py`) — point de départ à sculpter
-   manuellement, pas un personnage fini.
+5. **Générateurs de rig/personnage intégrés** (bouton du panneau) :
+   ✅ fait (`addon/character_builder.py`) — "Générer un personnage de
+   base" (armature+mesh skinné+shape keys ARKit) pour tester sans modèle,
+   et "Générer un rig pour le modèle sélectionné" (rig seul, calé sur la
+   taille d'un modèle importé). Set de bones faciaux "intermédiaire"
+   (~28 os), voir limites connues pour le sous-ensemble réellement piloté
+   par la capture. Point de départ à ajuster manuellement, pas un rig
+   fini.
 6. **Phase 3 — Stylisation cartoon** (post-traitement F-Curves : squash &
    stretch, amplification, timing) : pas commencé.
 7. **Phase 4 — Compagnon mobile** (un téléphone comme source, via

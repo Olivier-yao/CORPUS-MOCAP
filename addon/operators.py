@@ -383,15 +383,17 @@ class MOCAP_OT_add_wrist_rotation_limit(bpy.types.Operator):
 
 
 class MOCAP_OT_generate_base_character(bpy.types.Operator):
-    """Génère un personnage de base (armature + mesh humanoïde skinné +
-    shape keys ARKit + bones faciaux jaw/eyebrow.L/R), déjà nommé selon
-    la convention CORPUS-MOCAP et prêt à capturer — voir
-    addon/character_builder.py. Point de départ à sculpter/personnaliser
-    ensuite (Edit Mode, Sculpt Mode, Weight Paint pour affiner les
-    poids). Ré-exécuter ce bouton supprime et recrée entièrement l'objet
-    "CORPUS_MOCAP_Character" (et son mesh) : ne pas l'utiliser pour
-    régénérer un personnage déjà personnalisé, sous peine de perdre les
-    modifications."""
+    """Génère un personnage de base complet (armature + mesh humanoïde
+    skinné + shape keys ARKit + bones faciaux détaillés), déjà nommé
+    selon la convention CORPUS-MOCAP et prêt à capturer — utile pour
+    tester sans modèle personnel. Voir addon/character_builder.py. Point
+    de départ à sculpter/personnaliser ensuite (Edit Mode, Sculpt Mode,
+    Weight Paint pour affiner les poids). Ré-exécuter ce bouton supprime
+    et recrée entièrement l'objet "CORPUS_MOCAP_Character" (et son
+    mesh) : ne pas l'utiliser pour régénérer un personnage déjà
+    personnalisé, sous peine de perdre les modifications. Pour un rig
+    seul calé sur un modèle déjà importé, voir
+    "Générer un rig pour le modèle sélectionné" ci-dessous."""
 
     bl_idname = "mocap.generate_base_character"
     bl_label = "Générer un personnage de base"
@@ -413,6 +415,41 @@ class MOCAP_OT_generate_base_character(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MOCAP_OT_generate_rig_for_mesh(bpy.types.Operator):
+    """Génère UNIQUEMENT une armature (aucun mesh créé), mise à l'échelle
+    et positionnée pour approcher la taille/position de l'objet mesh
+    actif — voir addon/character_builder.py:generate_rig_for_mesh.
+    Comme pour un meta-rig Rigify, c'est une base approximative (calée
+    sur la boîte englobante du mesh) : repositionnez ensuite chaque bone
+    à la main (Edit Mode) pour l'aligner précisément sur les
+    articulations réelles de votre modèle (yeux, coins de bouche,
+    coudes, etc.). Ne skinne pas le mesh (Parent > Armature Deform reste
+    une étape manuelle séparée, comme pour n'importe quel rig)."""
+
+    bl_idname = "mocap.generate_rig_for_mesh"
+    bl_label = "Générer un rig pour le modèle sélectionné"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object is not None and context.active_object.type == 'MESH'
+
+    def execute(self, context):
+        mesh_obj = context.active_object
+        armature_obj = character_builder.generate_rig_for_mesh(mesh_obj)
+
+        settings = context.scene.corpus_mocap
+        settings.target_armature = armature_obj
+
+        self.report(
+            {'INFO'},
+            f"Rig '{armature_obj.name}' généré et calé sur '{mesh_obj.name}' — "
+            "approximatif, ajustez chaque os en Edit Mode puis skinnez le "
+            "mesh vous-même (Parent > Armature Deform).",
+        )
+        return {'FINISHED'}
+
+
 CLASSES = (
     MOCAP_OT_toggle_capture,
     MOCAP_OT_reset_rig,
@@ -420,6 +457,7 @@ CLASSES = (
     MOCAP_OT_interactive_bone_mapping,
     MOCAP_OT_add_wrist_rotation_limit,
     MOCAP_OT_generate_base_character,
+    MOCAP_OT_generate_rig_for_mesh,
 )
 
 
