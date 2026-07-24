@@ -32,6 +32,16 @@ class VIEW3D_PT_corpus_mocap(bpy.types.Panel):
         else:
             mapping_box.label(text="(boutons actifs en Edit Mode sur l'armature)", icon="INFO")
 
+        limit_box = layout.box()
+        limit_box.label(text="Limiter une rotation (optionnel)", icon="CON_ROTLIMIT")
+        limit_box.operator(
+            "mocap.add_wrist_rotation_limit", text="Limiter la rotation (poignet)", icon="CON_ROTLIMIT"
+        )
+        if context.mode == "POSE":
+            limit_box.label(text="S'applique à l'os actif sélectionné", icon="INFO")
+        else:
+            limit_box.label(text="(actif en Pose Mode, sur l'os sélectionné)", icon="INFO")
+
         box = layout.box()
         box.label(text="Source : Webcam PC")
         row = box.row(align=True)

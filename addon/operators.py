@@ -7,6 +7,8 @@ démarre puis arrête l'enregistrement — pas d'étape de connexion séparée.
 
 from __future__ import annotations
 
+import math
+
 import bpy
 
 from . import bone_mapping, face_mapping, hand_mapping
@@ -336,11 +338,51 @@ class MOCAP_OT_interactive_bone_mapping(bpy.types.Operator):
         return {'PASS_THROUGH'}
 
 
+class MOCAP_OT_add_wrist_rotation_limit(bpy.types.Operator):
+    """Ajoute une contrainte "Limit Rotation" avec des valeurs de départ
+    raisonnables pour un poignet (flexion/extension modérée, torsion très
+    limitée) sur le bone actif — s'applique par-dessus ce que la capture
+    calcule, sans modifier le code de mapping. Utile en attendant une
+    calibration parfaite de la rotation du poignet, ou pour n'importe
+    quel bone dont la rotation doit rester dans une plage anatomique
+    plausible. Valeurs ajustables ensuite dans Bone Constraint
+    Properties."""
+
+    bl_idname = "mocap.add_wrist_rotation_limit"
+    bl_label = "Limiter la rotation (poignet)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'POSE' and context.active_pose_bone is not None
+
+    def execute(self, context):
+        pose_bone = context.active_pose_bone
+        constraint = pose_bone.constraints.new(type='LIMIT_ROTATION')
+        constraint.owner_space = 'LOCAL'
+        constraint.use_limit_x = True
+        constraint.min_x = math.radians(-70)
+        constraint.max_x = math.radians(70)
+        constraint.use_limit_y = True
+        constraint.min_y = math.radians(-20)
+        constraint.max_y = math.radians(20)
+        constraint.use_limit_z = True
+        constraint.min_z = math.radians(-30)
+        constraint.max_z = math.radians(30)
+        self.report(
+            {'INFO'},
+            f"Contrainte de rotation limitée ajoutée sur '{pose_bone.name}' "
+            "(ajustable dans Bone Constraint Properties)",
+        )
+        return {'FINISHED'}
+
+
 CLASSES = (
     MOCAP_OT_toggle_capture,
     MOCAP_OT_reset_rig,
     MOCAP_OT_apply_bone_affixes,
     MOCAP_OT_interactive_bone_mapping,
+    MOCAP_OT_add_wrist_rotation_limit,
 )
 
 
