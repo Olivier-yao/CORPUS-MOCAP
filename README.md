@@ -194,8 +194,9 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
   jamais recalculé depuis les landmarks main) ; seule une **torsion pure**
   autour de cet axe fixe (pronation/supination) est dérivée de la
   direction index→auriculaire. Preuve mathématique de pureté de la
-  torsion vérifiée par un test autonome. Reste soumis au même angle mort
-  mono-caméra (voir plus bas) — à revalider en conditions réelles.
+  torsion vérifiée par un test autonome. **Validé en conditions réelles**
+  (la main reste alignée avec l'avant-bras, torsion toujours suivie).
+  Reste soumis au même angle mort mono-caméra (voir plus bas).
 - Mapping visage par correspondance de nom uniquement (pas de zone de
   mapping manuel dans l'UI pour l'instant) : fonctionne directement si le
   mesh a des shape keys nommées selon la convention ARKit, sinon les
