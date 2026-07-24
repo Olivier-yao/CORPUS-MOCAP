@@ -336,6 +336,21 @@ Trois options, selon votre cas :
   visibilité par point comme Pose) — une main est soit suivie entièrement,
   soit gelée entièrement si non détectée. Sensible à l'occlusion
   doigt-sur-doigt (même limite mono-caméra).
+- **Limites anatomiques globales** (bouton "Ajouter des limites
+  anatomiques (tout le corps)" du panneau) : ajoute une contrainte
+  `LIMIT_ROTATION` avec des plages par défaut (`operators.
+  ANATOMICAL_LIMITS_DEG`, empiriques) sur tous les os reconnus de
+  l'armature cible (colonne vertébrale — tous les segments détectés,
+  épaules, bras, jambes, tête, mâchoire) en un clic — filet de sécurité
+  contre les déformations extrêmes (un membre qui part dans une
+  direction impossible, mesh qui s'étire) causées par un glitch ponctuel
+  de tracking (landmark bruité ou mal détecté, ex. main hors cadre
+  brièvement). Complémentaire au bouton "Limiter la rotation (poignet)"
+  (réglage plus fin, un seul os à la fois). Idempotent (ré-exécuter met à
+  jour les mêmes contraintes plutôt que d'en empiler) ; valeurs
+  ajustables ensuite dans Bone Constraint Properties si trop
+  restrictives/permissives pour votre rig — à valider en conditions
+  réelles.
 - Torsion buste/bassin (pivoter sans se pencher) : **tentée puis
   retirée** cette itération — le code existe (`_torso_orientation_matrix`,
   `_apply_full_rotation`, `TORSO_TWIST_DAMPING`, non utilisés actuellement)

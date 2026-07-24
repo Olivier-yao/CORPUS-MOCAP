@@ -382,6 +382,110 @@ class MOCAP_OT_add_wrist_rotation_limit(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# (rôle de base, limites en degrés (min_x, max_x, min_y, max_y, min_z, max_z))
+# — repère LOCAL du bone. Y = axe de visée : _aim_bone (bone_mapping.py)
+# n'applique jamais de torsion explicite, Y reste donc quasi toujours
+# proche de 0 en fonctionnement normal — marge étroite plutôt que 0
+# strict pour ne pas générer de correction artificielle si le calcul de
+# repos n'est pas parfaitement exempt de bruit. X/Z = plage de flexion
+# anatomique, volontairement généreuse (empêche les déformations
+# extrêmes causées par un glitch ponctuel de tracking — landmark bruité/
+# mal détecté qui envoie un membre dans une direction impossible — sans
+# brider les mouvements normaux). Valeurs empiriques (comme les autres
+# constantes de calibration du projet), à ajuster par bone dans Bone
+# Constraint Properties si trop restrictives/permissives pour votre rig.
+ANATOMICAL_LIMITS_DEG = {
+    "spine": (-40, 40, -5, 5, -30, 30),
+    "shoulder": (-20, 20, -5, 5, -25, 25),
+    "upper_arm": (-100, 100, -5, 5, -100, 100),
+    "forearm": (-10, 130, -5, 5, -20, 20),
+    "thigh": (-100, 60, -5, 5, -60, 60),
+    "shin": (-140, 5, -5, 5, -10, 10),
+    "head": (-60, 60, -60, 60, -50, 50),
+    "jaw": (-5, 30, -5, 5, -5, 5),
+}
+
+
+def _base_role_for_bone(bone_name: str, prefix: str, suffix: str) -> str | None:
+    """Retourne le rôle de base (clé de ANATOMICAL_LIMITS_DEG) pour un nom
+    d'os résolu, ex. "DEF-upper_arm.L-suffix" -> "upper_arm" (préfixe/
+    suffixe retirés), "spine.002" -> "spine" (chaîne colonne vertébrale,
+    voir bone_mapping._spine_chain_bone_names). None si aucun rôle connu
+    ne correspond."""
+    name = bone_name
+    if prefix and name.startswith(prefix):
+        name = name[len(prefix):]
+    if suffix and name.endswith(suffix):
+        name = name[: len(name) - len(suffix)]
+    if name == "spine" or name.startswith("spine."):
+        return "spine"
+    if name.endswith(".L") or name.endswith(".R"):
+        name = name[:-2]
+    return name if name in ANATOMICAL_LIMITS_DEG else None
+
+
+class MOCAP_OT_add_anatomical_limits(bpy.types.Operator):
+    """Ajoute une contrainte "Limit Rotation" avec des plages anatomiques
+    par défaut à tous les os du corps/tête reconnus sur l'armature cible
+    (colonne vertébrale, épaules, bras, jambes, tête, mâchoire) — empêche
+    les déformations extrêmes (un membre qui part dans une direction
+    impossible, mesh qui s'étire) causées par un glitch ponctuel de
+    tracking (landmark bruité ou mal détecté). S'applique par-dessus ce
+    que la capture calcule, sans modifier le code de mapping. Remplace
+    toute contrainte "Limit Rotation" déjà posée par ce bouton sur un os
+    concerné plutôt que d'en empiler plusieurs (ré-exécuter est donc sûr).
+    Valeurs ajustables ensuite dans Bone Constraint Properties, par os, si
+    trop restrictives/permissives pour votre rig — voir aussi "Limiter la
+    rotation (poignet)" pour un réglage plus fin dédié au poignet."""
+
+    bl_idname = "mocap.add_anatomical_limits"
+    bl_label = "Ajouter des limites anatomiques (tout le corps)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        settings = context.scene.corpus_mocap
+        return settings.target_armature is not None
+
+    def execute(self, context):
+        settings = context.scene.corpus_mocap
+        armature_obj = settings.target_armature
+        prefix, suffix = settings.bone_prefix, settings.bone_suffix
+
+        count = 0
+        for pose_bone in armature_obj.pose.bones:
+            role = _base_role_for_bone(pose_bone.name, prefix, suffix)
+            if role is None:
+                continue
+            min_x, max_x, min_y, max_y, min_z, max_z = ANATOMICAL_LIMITS_DEG[role]
+
+            existing = pose_bone.constraints.get("CORPUS-MOCAP Limite anatomique")
+            constraint = existing if existing is not None else pose_bone.constraints.new(type='LIMIT_ROTATION')
+            constraint.name = "CORPUS-MOCAP Limite anatomique"
+            constraint.owner_space = 'LOCAL'
+            constraint.use_limit_x = True
+            constraint.min_x = math.radians(min_x)
+            constraint.max_x = math.radians(max_x)
+            constraint.use_limit_y = True
+            constraint.min_y = math.radians(min_y)
+            constraint.max_y = math.radians(max_y)
+            constraint.use_limit_z = True
+            constraint.min_z = math.radians(min_z)
+            constraint.max_z = math.radians(max_z)
+            count += 1
+
+        if count == 0:
+            self.report({'WARNING'}, "Aucun os reconnu sur cette armature — aucune limite ajoutée")
+            return {'CANCELLED'}
+
+        self.report(
+            {'INFO'},
+            f"{count} limite(s) anatomique(s) ajoutée(s)/mises à jour "
+            "(ajustables dans Bone Constraint Properties)",
+        )
+        return {'FINISHED'}
+
+
 class MOCAP_OT_generate_base_character(bpy.types.Operator):
     """Génère un personnage de base complet (armature + mesh humanoïde
     skinné + shape keys ARKit + bones faciaux détaillés), déjà nommé
@@ -574,6 +678,7 @@ CLASSES = (
     MOCAP_OT_apply_bone_affixes,
     MOCAP_OT_interactive_bone_mapping,
     MOCAP_OT_add_wrist_rotation_limit,
+    MOCAP_OT_add_anatomical_limits,
     MOCAP_OT_generate_base_character,
     MOCAP_OT_generate_rig_for_mesh,
     MOCAP_OT_generate_reference_points,
