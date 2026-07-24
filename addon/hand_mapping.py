@@ -61,7 +61,12 @@ def _hand_orientation_matrix(wrist: Vector, middle_mcp: Vector, index_mcp: Vecto
         return None
     up = Vector((up.x, up.y * HAND_DEPTH_DAMPING, up.z)).normalized()
 
+    # right_raw n'était pas amorti sur l'axe de profondeur jusqu'ici — même
+    # trou que celui trouvé sur les membres du corps (upper_arm/forearm),
+    # cause probable du chaos observé lors du premier essai de rotation
+    # du poignet.
     right_raw = index_mcp - pinky_mcp
+    right_raw = Vector((right_raw.x, right_raw.y * HAND_DEPTH_DAMPING, right_raw.z))
     if right_raw.length_squared < 1e-8:
         return None
     right = right_raw - up * right_raw.dot(up)
@@ -92,17 +97,16 @@ def apply_hand(
     def bone(name: str):
         return pose_bones.get(resolve_bone_name(name, prefix, suffix))
 
-    # Rotation du poignet temporairement désactivée : validée correcte sur
-    # le rig de test, mais une mauvaise calibration sur un autre rig (les
-    # doigts en sont enfants) peut faire dérailler tout le calcul des
-    # doigts en cascade — même symptôme que la torsion bassin/jambes.
-    # Décommenter pour retester une fois la convention d'axes vérifiée.
-    # hand_bone = bone(f"hand.{side}")
-    # if hand_bone is not None:
-    #     orientation = _hand_orientation_matrix(lm(WRIST), lm(MIDDLE_MCP), lm(INDEX_MCP), lm(PINKY_MCP))
-    #     if orientation is not None:
-    #         _apply_full_rotation(hand_bone, orientation, armature_obj)
-    #         bpy.context.view_layer.update()
+    # Réactivé après ajout de l'amortissement de profondeur manquant sur
+    # right_raw (cause probable du chaos précédent, par analogie avec le
+    # même trou trouvé sur upper_arm/forearm) — à revalider en conditions
+    # réelles.
+    hand_bone = bone(f"hand.{side}")
+    if hand_bone is not None:
+        orientation = _hand_orientation_matrix(lm(WRIST), lm(MIDDLE_MCP), lm(INDEX_MCP), lm(PINKY_MCP))
+        if orientation is not None:
+            _apply_full_rotation(hand_bone, orientation, armature_obj)
+            bpy.context.view_layer.update()
 
     for finger_name, indices in FINGER_LANDMARKS:
         for seg_index in range(3):

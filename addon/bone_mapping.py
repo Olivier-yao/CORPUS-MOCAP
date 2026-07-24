@@ -33,6 +33,15 @@ LANDMARK_INDEX = {
     "left_ankle": 27, "right_ankle": 28,
 }
 
+# (bone épaule/clavicule, landmark épaule) — visé depuis le centre des
+# épaules (shoulder_center) vers le landmark épaule correspondant, pour
+# capter le mouvement de l'omoplate (hausser/baisser, avancer/reculer)
+# indépendamment de la rotation du bras (upper_arm) qui part du même point.
+CLAVICLE_SEGMENTS = [
+    ("shoulder.L", "left_shoulder"),
+    ("shoulder.R", "right_shoulder"),
+]
+
 # (bone, landmark de départ, landmark d'arrivée)
 LIMB_SEGMENTS = [
     ("upper_arm.L", "left_shoulder", "left_elbow"),
@@ -65,6 +74,11 @@ SPINE_DEPTH_DAMPING = 0.3
 # de profondeur sur epaule/coude/poignet peut suffire à faire pointer tout
 # le membre dans une direction très éloignée du mouvement réel.
 LIMB_DEPTH_DAMPING = 0.4
+
+# Amortissement plus fort pour l'épaule/clavicule (comme les doigts) : le
+# déplacement épaule<->centre des épaules est petit/subtil (hausser les
+# épaules, etc.), donc particulièrement sensible au bruit de profondeur.
+CLAVICLE_DEPTH_DAMPING = 0.25
 
 # En dessous de ce seuil de confiance MediaPipe (0-1), un landmark est
 # considéré "non fiable" (souvent hors cadre) : le membre concerné est
@@ -335,6 +349,16 @@ def apply_pose(
         _aim_bone(spine_bone, spine_dir, armature_obj)
         bpy.context.view_layer.update()
 
+    if shoulders_visible:
+        for clavicle_bone_name, shoulder_landmark_name in CLAVICLE_SEGMENTS:
+            clavicle_bone = bone(clavicle_bone_name)
+            if clavicle_bone is None or not _visible(landmarks, shoulder_landmark_name):
+                continue
+            clavicle_dir = lm(shoulder_landmark_name) - shoulder_center
+            clavicle_dir.y *= CLAVICLE_DEPTH_DAMPING
+            _aim_bone(clavicle_bone, clavicle_dir, armature_obj)
+            bpy.context.view_layer.update()
+
     for bone_name, start_name, end_name in LIMB_SEGMENTS:
         pose_bone = bone(bone_name)
         if pose_bone is None:
@@ -352,5 +376,6 @@ def apply_pose(
 def get_animated_bone_names(prefix: str = "", suffix: str = "") -> list[str]:
     """Noms résolus des os affectés par apply_pose, pour l'insertion de keyframes."""
     names = ["hips", "spine"]
+    names.extend(bone_name for bone_name, _ in CLAVICLE_SEGMENTS)
     names.extend(bone_name for bone_name, _, _ in LIMB_SEGMENTS)
     return [resolve_bone_name(name, prefix, suffix) for name in names]

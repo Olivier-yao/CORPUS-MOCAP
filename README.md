@@ -171,6 +171,20 @@ cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
   ajuster selon votre recul webcam. L'axe de profondeur est volontairement
   très amorti car le "z" MediaPipe (déduit d'une seule caméra RGB) est
   bruité — c'était la cause probable d'un effet de "glissement" du rig.
+  Le même amortissement (`LIMB_DEPTH_DAMPING`) s'applique maintenant aussi
+  à la direction de chaque membre (bras/jambe) — son absence causait un
+  membre pointant parfois dans une direction très éloignée du mouvement
+  réel, repéré tardivement car ça passait inaperçu sur des mouvements
+  simples.
+- Épaule/clavicule (`shoulder.L/R`, `CLAVICLE_SEGMENTS`) : nouveau,
+  visé depuis le centre des épaules vers chaque épaule (amortissement de
+  profondeur fort, `CLAVICLE_DEPTH_DAMPING`, signal subtil) — à valider
+  en conditions réelles.
+- Rotation du poignet (`hand.L/R`) : réactivée après avoir trouvé un
+  amortissement de profondeur manquant sur la référence de torsion
+  (`right_raw` dans `_hand_orientation_matrix`) — à revalider en
+  conditions réelles, notamment sur un rig externe (elle avait causé un
+  chaos des doigts en cascade avant ce correctif).
 - Mapping visage par correspondance de nom uniquement (pas de zone de
   mapping manuel dans l'UI pour l'instant) : fonctionne directement si le
   mesh a des shape keys nommées selon la convention ARKit, sinon les
