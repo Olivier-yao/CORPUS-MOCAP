@@ -19,13 +19,21 @@ class VIEW3D_PT_corpus_mocap(bpy.types.Panel):
             text="Générer un personnage de base",
             icon="OUTLINER_OB_ARMATURE",
         )
-        layout.operator(
+
+        rig_box = layout.box()
+        rig_box.label(text="Rig calé sur mon modèle (optionnel)", icon="ARMATURE_DATA")
+        rig_box.operator(
             "mocap.generate_rig_for_mesh",
             text="Générer un rig pour le modèle sélectionné",
-            icon="ARMATURE_DATA",
         )
+        rig_box.label(text="— ou, plus précis en 2 étapes —")
+        points_row = rig_box.row(align=True)
+        points_row.operator("mocap.generate_reference_points", text="1. Points de repère")
+        points_row.operator("mocap.build_rig_from_points", text="2. Construire le rig")
         if context.active_object is None or context.active_object.type != 'MESH':
-            layout.label(text="(sélectionnez votre mesh pour ce bouton)", icon="INFO")
+            rig_box.label(text="(sélectionnez votre mesh pour ces boutons)", icon="INFO")
+        else:
+            rig_box.label(text="Snap to Vertex conseillé pour placer les points", icon="INFO")
 
         layout.prop(settings, "target_armature")
         layout.prop(settings, "target_face_mesh")

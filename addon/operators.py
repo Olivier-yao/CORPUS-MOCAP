@@ -450,6 +450,75 @@ class MOCAP_OT_generate_rig_for_mesh(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MOCAP_OT_generate_reference_points(bpy.types.Operator):
+    """Étape 1/2 d'une alternative à "Générer un rig pour le modèle
+    sélectionné" : crée un petit point (Empty) par articulation attendue
+    (yeux, coudes, coins de bouche, etc.), calé sur la taille du mesh
+    actif — même approximation grossière que le bouton rig direct. Plus
+    simple à positionner précisément qu'un bone en Edit Mode : activez le
+    Snap to Vertex de Blender (aimant en haut de la Vue 3D, mode Vertex)
+    puis déplacez (G) chaque point pour le coller exactement sur la
+    surface de votre modèle. Une fois tous les points ajustés, utilisez
+    "Construire le rig depuis les points" pour générer l'armature à
+    partir de leur position actuelle. Les points sont regroupés dans la
+    collection "CORPUS_MOCAP_RigPoints" (Outliner) — supprimez-les une
+    fois le rig construit si vous n'en avez plus besoin. Ré-exécuter ce
+    bouton supprime et recrée tous les points (perd tout déplacement déjà
+    fait). N'inclut pas les doigts (voir addon/character_builder.py)."""
+
+    bl_idname = "mocap.generate_reference_points"
+    bl_label = "Générer les points de repère"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object is not None and context.active_object.type == 'MESH'
+
+    def execute(self, context):
+        mesh_obj = context.active_object
+        character_builder.generate_reference_points(mesh_obj)
+        self.report(
+            {'INFO'},
+            "Points de repère générés (collection 'CORPUS_MOCAP_RigPoints') — "
+            "déplacez-les (Snap to Vertex) sur les articulations réelles de "
+            "votre modèle, puis \"Construire le rig depuis les points\".",
+        )
+        return {'FINISHED'}
+
+
+class MOCAP_OT_build_rig_from_points(bpy.types.Operator):
+    """Étape 2/2 : construit l'armature à partir de la position ACTUELLE
+    des points générés par "Générer les points de repère" — à utiliser
+    après les avoir repositionnés, pas juste après les avoir générés. Ne
+    touche à aucun mesh (skinnage manuel séparé, comme
+    "Générer un rig pour le modèle sélectionné")."""
+
+    bl_idname = "mocap.build_rig_from_points"
+    bl_label = "Construire le rig depuis les points"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return character_builder.POINTS_COLLECTION_NAME in bpy.data.collections
+
+    def execute(self, context):
+        try:
+            armature_obj = character_builder.build_rig_from_points()
+        except RuntimeError as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+        settings = context.scene.corpus_mocap
+        settings.target_armature = armature_obj
+
+        self.report(
+            {'INFO'},
+            f"Rig '{armature_obj.name}' construit depuis les points de repère "
+            "— skinnez le mesh vous-même (Parent > Armature Deform).",
+        )
+        return {'FINISHED'}
+
+
 CLASSES = (
     MOCAP_OT_toggle_capture,
     MOCAP_OT_reset_rig,
@@ -458,6 +527,8 @@ CLASSES = (
     MOCAP_OT_add_wrist_rotation_limit,
     MOCAP_OT_generate_base_character,
     MOCAP_OT_generate_rig_for_mesh,
+    MOCAP_OT_generate_reference_points,
+    MOCAP_OT_build_rig_from_points,
 )
 
 

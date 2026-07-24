@@ -84,20 +84,37 @@ Trois options, selon votre cas :
 
 - **Vous avez déjà un modèle 3D personnel** (recommandé dans ce cas) :
   une fois l'addon installé (étape 6 ci-dessous), sélectionnez votre mesh
-  dans la scène puis bouton **"Générer un rig pour le modèle
-  sélectionné"** en haut du panneau CORPUS-MOCAP — génère **uniquement
-  une armature** (aucun mesh créé), mise à l'échelle et positionnée pour
-  approcher la taille/position de votre modèle (calée sur sa boîte
-  englobante). Comme pour un meta-rig Rigify : c'est une base
-  approximative, pas un alignement précis — repositionnez ensuite chaque
-  os à la main (Edit Mode) sur les articulations réelles de votre modèle
-  (yeux, coins de bouche, coudes, etc.) pour affiner, puis skinnez le
-  mesh vous-même (Ctrl+P > **Armature Deform**, poids automatiques ou à
-  la main) — cette étape reste manuelle, comme pour n'importe quel rig.
-  Inclut un set de bones faciaux "intermédiaire" (~28 os : yeux,
+  dans la scène, puis deux façons de générer un rig calé sur sa taille
+  (boîte englobante) — **aucune des deux ne crée de mesh ni ne skinne
+  automatiquement votre modèle**, ça reste une étape manuelle (Ctrl+P >
+  **Armature Deform**, poids automatiques ou à la main), comme pour
+  n'importe quel rig :
+  - **Direct** : bouton **"Générer un rig pour le modèle sélectionné"**
+    — génère l'armature immédiatement. Comme pour un meta-rig Rigify,
+    c'est une base approximative : repositionnez ensuite chaque os à la
+    main (Edit Mode) sur les articulations réelles de votre modèle (yeux,
+    coins de bouche, coudes, etc.).
+  - **En 2 étapes, plus précis** : bouton **"1. Points de repère"** — crée
+    un petit point (Empty) par articulation, calé sur la taille du mesh
+    (même approximation que ci-dessus). Activez le **Snap to Vertex** de
+    Blender (aimant en haut de la Vue 3D, mode Vertex) et déplacez (`G`)
+    chaque point pour le coller exactement sur la surface de votre modèle
+    — bien plus simple à positionner précisément qu'un bone en Edit Mode.
+    Une fois tous les points ajustés, bouton **"2. Construire le rig"** —
+    génère l'armature à partir de la position actuelle de chaque point.
+    Les points restent dans la collection `CORPUS_MOCAP_RigPoints`
+    (Outliner) après coup, à supprimer une fois le rig construit si vous
+    n'en avez plus besoin. Ré-exécuter "1. Points de repère" supprime et
+    recrée tous les points (perd tout déplacement déjà fait).
+
+  Les deux inclus un set de bones faciaux "intermédiaire" (~28 os : yeux,
   paupières, sourcils en 3 points par côté, nez, joues, mâchoire, menton,
-  coins de bouche, lèvres, oreilles — voir Limites connues). Voir
-  `addon/character_builder.py:generate_rig_for_mesh`.
+  coins de bouche, lèvres, oreilles — voir Limites connues), et
+  n'incluent PAS les doigts dans le placement manuel (trop nombreux à
+  positionner un par un) : les bones de doigts restent mis à l'échelle
+  automatiquement, à ajuster ensuite en Edit Mode si besoin. Voir
+  `addon/character_builder.py` (`generate_rig_for_mesh`,
+  `generate_reference_points`, `build_rig_from_points`).
 - **Vous n'avez pas encore de modèle, testez le pipeline** : bouton
   **"Générer un personnage de base"** — génère en un clic une armature
   humanoïde skinnée (poids automatiques) + un mesh (corps + tête) + les
@@ -107,9 +124,10 @@ Trois options, selon votre cas :
   sculpter/redessiner ensuite (Edit Mode / Sculpt Mode / Weight Paint)
   **sans renommer les os ni les shape keys** pour rester compatible avec
   la capture. Voir `addon/character_builder.py:generate`.
-  Ré-exécuter l'un ou l'autre de ces deux boutons supprime et recrée
-  entièrement l'armature (et le mesh pour "personnage de base") du même
-  nom — ne pas les utiliser pour régénérer un rig déjà ajusté/personnalisé.
+  Ré-exécuter n'importe lequel de ces boutons de génération supprime et
+  recrée entièrement l'armature (et le mesh pour "personnage de base")
+  du même nom — ne pas les utiliser pour régénérer un rig déjà
+  ajusté/personnalisé.
 - **Scripts séparés** (utile pour valider le pipeline sans mesh, ou avant
   que l'addon ne soit installé) : dans Blender, onglet **Scripting**,
   **dans cet ordre** (les mains s'ajoutent au rig de corps déjà créé) :
@@ -255,13 +273,18 @@ Trois options, selon votre cas :
   volontairement exclus des shape keys générées par "Générer un
   personnage de base" (pas de double animation de la même zone par deux
   mécanismes) — à revalider en conditions réelles.
-- **"Générer un rig pour le modèle sélectionné"** : la mise à l'échelle
-  (`character_builder.compute_fit_transform`) est une approximation
-  grossière basée uniquement sur la hauteur (boîte englobante monde du
-  mesh, axe Z) et un centrage horizontal — pas de détection des
-  articulations réelles du modèle (yeux, coudes, etc.), le repositionnement
-  précis de chaque os reste entièrement manuel (Edit Mode), comme pour un
-  meta-rig Rigify. Ne skinne jamais le mesh cible automatiquement.
+- **Rig calé sur un modèle** (direct ou en 2 étapes via points de repère)
+  : la mise à l'échelle (`character_builder.compute_fit_transform`) est
+  une approximation grossière basée uniquement sur la hauteur (boîte
+  englobante monde du mesh, axe Z) et un centrage horizontal — **aucune
+  détection automatique** des articulations réelles du modèle (yeux,
+  coudes, etc.), le positionnement précis reste entièrement manuel, que
+  ce soit sur des bones (Edit Mode, variante directe) ou sur des points
+  (Object Mode + Snap to Vertex, variante en 2 étapes) — cette dernière
+  n'est qu'une manipulation différente, pas une précision automatique en
+  plus. Les points de repère (`generate_reference_points`) n'incluent pas
+  les doigts (trop nombreux à positionner un par un). Aucune des deux
+  variantes ne skinne jamais le mesh cible automatiquement.
 - Rotation de tête (`facial_transformation_matrixes` → bone "head") :
   mapping d'axes empirique (`addon/face_mapping.py`, `_MP_TO_RIG`), pas
   formellement documenté par MediaPipe — à vérifier/ajuster si un axe
@@ -318,14 +341,16 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
    ex. pour un rig Rigify `DEF-upper_arm.L` — cahier des charges §7) :
    ✅ fait (préfixe/suffixe global uniquement, pas de remapping par bone
    individuel — voir limites connues).
-5. **Générateurs de rig/personnage intégrés** (bouton du panneau) :
+5. **Générateurs de rig/personnage intégrés** (boutons du panneau) :
    ✅ fait (`addon/character_builder.py`) — "Générer un personnage de
    base" (armature+mesh skinné+shape keys ARKit) pour tester sans modèle,
-   et "Générer un rig pour le modèle sélectionné" (rig seul, calé sur la
-   taille d'un modèle importé). Set de bones faciaux "intermédiaire"
-   (~28 os), voir limites connues pour le sous-ensemble réellement piloté
-   par la capture. Point de départ à ajuster manuellement, pas un rig
-   fini.
+   "Générer un rig pour le modèle sélectionné" (rig seul, calé sur la
+   taille d'un modèle importé), et sa variante en 2 étapes "Points de
+   repère" + "Construire le rig" (positionnement précis via des Empties
+   déplaçables plutôt que des bones en Edit Mode). Set de bones faciaux
+   "intermédiaire" (~28 os), voir limites connues pour le sous-ensemble
+   réellement piloté par la capture. Point de départ à ajuster
+   manuellement, pas un rig fini.
 6. **Phase 3 — Stylisation cartoon** (post-traitement F-Curves : squash &
    stretch, amplification, timing) : pas commencé.
 7. **Phase 4 — Compagnon mobile** (un téléphone comme source, via

@@ -1,4 +1,4 @@
-"""Génère un rig CORPUS-MOCAP, de deux façons :
+"""Génère un rig CORPUS-MOCAP, de trois façons :
 
 1. `generate()` : personnage de base complet (armature + mesh humanoïde
    proportionné + shape keys ARKit), pour tester sans modèle personnel —
@@ -8,31 +8,44 @@
    mis à l'échelle et positionné pour correspondre approximativement au
    modèle 3D sélectionné (calé sur sa boîte englobante) — voir
    MOCAP_OT_generate_rig_for_mesh, bouton "Générer un rig pour le modèle
-   sélectionné". Point de départ approximatif seulement : comme pour un
-   meta-rig Rigify, l'utilisateur doit ensuite repositionner chaque bone
-   à la main (Edit Mode) pour l'aligner précisément sur les articulations
-   réelles de son modèle (yeux, coins de bouche, coudes, etc.) — ce
-   module ne détecte aucun point du mesh automatiquement, il ne fait que
-   fournir un squelette de la bonne taille/proportion globale comme
-   base de travail. Le squelettage (Parent > Armature Deform) du mesh
-   reste une étape manuelle séparée, comme pour n'importe quel rig.
+   sélectionné". Point de départ approximatif : comme pour un meta-rig
+   Rigify, l'utilisateur doit ensuite repositionner chaque bone à la main
+   (Edit Mode) pour l'aligner précisément sur les articulations réelles
+   de son modèle.
+3. `generate_reference_points(mesh_obj)` + `build_rig_from_points()` :
+   variante en 2 étapes de l'option 2, pour un positionnement plus précis
+   sans manipuler des bones directement. Étape 1 crée un petit Empty par
+   articulation (voir JOINTS), calé sur la taille du mesh comme
+   generate_rig_for_mesh. L'utilisateur déplace ensuite chaque point
+   individuellement (activer le Snap to Vertex de Blender pour les coller
+   exactement sur la surface du modèle — yeux, coudes, coins de bouche,
+   etc., beaucoup plus simple à manipuler en Object Mode qu'un bone en
+   Edit Mode). Étape 2 (`build_rig_from_points`) lit la position ACTUELLE
+   de chaque point et construit l'armature à partir de ces positions —
+   voir MOCAP_OT_generate_reference_points / MOCAP_OT_build_rig_from_points.
+   Ce module ne détecte lui-même aucun point sur le mesh : le
+   positionnement précis reste entièrement manuel dans les trois cas.
 
-Dans les deux cas, les bones sont nommés selon la convention attendue
+Dans tous les cas, les bones sont nommés selon la convention attendue
 par le mapping de capture — voir addon/bone_mapping.py (corps),
 addon/hand_mapping.py (doigts), addon/face_mapping.py (visage : head,
-jaw, brow.in/mid/out.L/R, et les autres bones faciaux ci-dessous qui ne
-sont pas tous pilotés par la capture, voir CANONICAL_FACE_BONES).
+jaw, brow.in/out.L/R, et les autres bones faciaux définis ici qui ne
+sont pas tous pilotés par la capture, voir FACE_BONE_JOINTS). Le
+squelettage (Parent > Armature Deform) d'un mesh existant reste toujours
+une étape manuelle séparée, jamais faite automatiquement par ce module
+(sauf dans generate(), qui skinne le mesh QU'IL a lui-même créé).
 L'utilisateur peut sculpter/redessiner un personnage généré par
 generate() à sa convenance (Edit Mode / Sculpt Mode, Weight Paint pour
 affiner les poids d'os) SANS renommer les bones ni les shape keys, pour
 garder la compatibilité avec le mapping de capture.
 
-Convention de coordonnées : les positions de CANONICAL_* ci-dessous sont
-en coordonnées "monde" absolues pour un personnage de référence d'1m72
-(rig à l'origine, sans transform propre), exactement comme
-tools/generate_test_rig.py. generate_rig_for_mesh() applique une échelle
-+ un décalage uniformes à ces coordonnées de référence pour approcher la
-taille/position du mesh cible (voir compute_fit_transform)."""
+Convention de coordonnées : les positions de JOINTS sont en coordonnées
+"monde" absolues pour un personnage de référence d'1m72 (rig à
+l'origine, sans transform propre), exactement comme
+tools/generate_test_rig.py. generate_rig_for_mesh() et
+generate_reference_points() appliquent une échelle + un décalage
+uniformes à ces coordonnées de référence pour approcher la taille/
+position du mesh cible (voir compute_fit_transform)."""
 
 from __future__ import annotations
 
@@ -45,38 +58,152 @@ MESH_NAME = "CORPUS_MOCAP_Character_Mesh"
 HEAD_CENTER = Vector((0.0, 0.0, 1.64))
 HEAD_RADIUS = 0.12
 
-# (nom, tête, queue, parent, connecté à son parent) — identique à
-# tools/generate_test_rig.py (dupliqué ici pour que ce module reste
-# autonome : tools/ n'est pas embarqué dans l'addon installé).
-CANONICAL_BODY_BONES = [
-    ("hips",        (0.0,  0.0, 1.00), (0.0,  0.0, 1.08), None,       False),
-    ("spine",       (0.0,  0.0, 1.00), (0.0,  0.0, 1.25), "hips",     False),
-    ("chest",       (0.0,  0.0, 1.25), (0.0,  0.0, 1.45), "spine",    True),
-    ("neck",        (0.0,  0.0, 1.45), (0.0,  0.0, 1.55), "chest",    True),
-    ("head",        (0.0,  0.0, 1.55), (0.0,  0.0, 1.72), "neck",     True),
+# Position de référence (coordonnées "monde", personnage d'1m72) de
+# chaque articulation nommée — source unique utilisée à la fois pour
+# construire le rig canonique (generate/generate_rig_for_mesh) ET pour
+# placer les points de repère déplaçables (generate_reference_points).
+# Chaque bone de BODY_BONE_JOINTS/FACE_BONE_JOINTS référence deux de ces
+# noms (tête, queue) plutôt que des coordonnées en dur — voir
+# _resolve_bone_coords. Les bones CONNECTÉS (connected=True) partagent le
+# même nom de joint entre la queue du parent et la tête de l'enfant :
+# Blender force de toute façon la tête d'un bone connecté à coïncider
+# avec la queue de son parent, donc leur donner le même point est à la
+# fois correct et permet de les déplacer ensemble comme une seule
+# articulation dans le flux "points de repère".
+JOINTS: dict[str, tuple[float, float, float]] = {
+    # --- Corps ---
+    "root":          (0.0, 0.0, 1.00),   # hips.head, spine.head
+    "hips_top":      (0.0, 0.0, 1.08),   # hips.tail (bone court, pas une vraie articulation)
+    "chest_base":    (0.0, 0.0, 1.25),   # spine.tail / chest.head
+    "neck_base":     (0.0, 0.0, 1.45),   # chest.tail / neck.head
+    "head_base":     (0.0, 0.0, 1.55),   # neck.tail / head.head
+    "head_top":      (0.0, 0.0, 1.72),   # head.tail
 
-    ("shoulder.L",  (0.05, 0.0, 1.45), (0.18, 0.0, 1.45), "chest",    False),
-    ("upper_arm.L", (0.18, 0.0, 1.45), (0.50, 0.0, 1.45), "shoulder.L", True),
-    ("forearm.L",   (0.50, 0.0, 1.45), (0.78, 0.0, 1.45), "upper_arm.L", True),
-    ("hand.L",      (0.78, 0.0, 1.45), (0.92, 0.0, 1.45), "forearm.L", True),
+    "clavicle_in.L": (0.05, 0.0, 1.45),
+    "shoulder.L":    (0.18, 0.0, 1.45),  # shoulder.L.tail / upper_arm.L.head
+    "elbow.L":       (0.50, 0.0, 1.45),  # upper_arm.L.tail / forearm.L.head
+    "wrist.L":       (0.78, 0.0, 1.45),  # forearm.L.tail / hand.L.head
+    "hand_tip.L":    (0.92, 0.0, 1.45),
 
-    ("shoulder.R",  (-0.05, 0.0, 1.45), (-0.18, 0.0, 1.45), "chest",   False),
-    ("upper_arm.R", (-0.18, 0.0, 1.45), (-0.50, 0.0, 1.45), "shoulder.R", True),
-    ("forearm.R",   (-0.50, 0.0, 1.45), (-0.78, 0.0, 1.45), "upper_arm.R", True),
-    ("hand.R",      (-0.78, 0.0, 1.45), (-0.92, 0.0, 1.45), "forearm.R", True),
+    "clavicle_in.R": (-0.05, 0.0, 1.45),
+    "shoulder.R":    (-0.18, 0.0, 1.45),
+    "elbow.R":       (-0.50, 0.0, 1.45),
+    "wrist.R":       (-0.78, 0.0, 1.45),
+    "hand_tip.R":    (-0.92, 0.0, 1.45),
 
-    ("thigh.L",     (0.10, 0.0, 1.00), (0.10, 0.0, 0.55), "hips",     False),
-    ("shin.L",      (0.10, 0.0, 0.55), (0.10, 0.0, 0.12), "thigh.L",  True),
-    ("foot.L",      (0.10, 0.0, 0.12), (0.10, 0.14, 0.02), "shin.L",  True),
+    "hip.L":         (0.10, 0.0, 1.00),
+    "knee.L":        (0.10, 0.0, 0.55),  # thigh.L.tail / shin.L.head
+    "ankle.L":       (0.10, 0.0, 0.12),  # shin.L.tail / foot.L.head
+    "foot_tip.L":    (0.10, 0.14, 0.02),
 
-    ("thigh.R",     (-0.10, 0.0, 1.00), (-0.10, 0.0, 0.55), "hips",   False),
-    ("shin.R",      (-0.10, 0.0, 0.55), (-0.10, 0.0, 0.12), "thigh.R", True),
-    ("foot.R",      (-0.10, 0.0, 0.12), (-0.10, 0.14, 0.02), "shin.R", True),
+    "hip.R":         (-0.10, 0.0, 1.00),
+    "knee.R":        (-0.10, 0.0, 0.55),
+    "ankle.R":       (-0.10, 0.0, 0.12),
+    "foot_tip.R":    (-0.10, 0.14, 0.02),
+
+    # --- Visage (niveau "intermédiaire", voir FACE_BONE_JOINTS) ---
+    "jaw_hinge":      (0.0, -0.04, 1.60),
+    "chin_top":       (0.0, -0.07, 1.545),   # jaw.tail / chin.head
+    "chin_tip":       (0.0, -0.09, 1.525),
+
+    "eye.L":          (0.045, -0.11, 1.665),
+    "eye_socket.L":   (0.045, -0.13, 1.665),
+    "eye.R":          (-0.045, -0.11, 1.665),
+    "eye_socket.R":   (-0.045, -0.13, 1.665),
+
+    "lid_T.L":        (0.045, -0.10, 1.675),
+    "lid_T_end.L":    (0.045, -0.105, 1.672),
+    "lid_B.L":        (0.045, -0.10, 1.655),
+    "lid_B_end.L":    (0.045, -0.105, 1.658),
+    "lid_T.R":        (-0.045, -0.10, 1.675),
+    "lid_T_end.R":    (-0.045, -0.105, 1.672),
+    "lid_B.R":        (-0.045, -0.10, 1.655),
+    "lid_B_end.R":    (-0.045, -0.105, 1.658),
+
+    "brow_in.L":      (0.02, -0.095, 1.695),
+    "brow_in_end.L":  (0.02, -0.095, 1.705),
+    "brow_mid.L":     (0.045, -0.095, 1.70),
+    "brow_mid_end.L": (0.045, -0.095, 1.71),
+    "brow_out.L":     (0.07, -0.09, 1.695),
+    "brow_out_end.L": (0.07, -0.09, 1.705),
+    "brow_in.R":      (-0.02, -0.095, 1.695),
+    "brow_in_end.R":  (-0.02, -0.095, 1.705),
+    "brow_mid.R":     (-0.045, -0.095, 1.70),
+    "brow_mid_end.R": (-0.045, -0.095, 1.71),
+    "brow_out.R":     (-0.07, -0.09, 1.695),
+    "brow_out_end.R": (-0.07, -0.09, 1.705),
+
+    "nose_bridge":    (0.0, -0.11, 1.63),
+    "nose_tip":       (0.0, -0.125, 1.60),   # nose.tail / nose.tip.head
+    "nose_tip_end":   (0.0, -0.135, 1.595),
+
+    "cheek.L":        (0.07, -0.08, 1.60),
+    "cheek_end.L":    (0.09, -0.07, 1.60),
+    "cheek.R":        (-0.07, -0.08, 1.60),
+    "cheek_end.R":    (-0.09, -0.07, 1.60),
+
+    "mouth_corner.L":     (0.035, -0.105, 1.575),
+    "mouth_corner_end.L": (0.045, -0.10, 1.575),
+    "mouth_corner.R":     (-0.035, -0.105, 1.575),
+    "mouth_corner_end.R": (-0.045, -0.10, 1.575),
+
+    "lip_T_center":       (0.0, -0.11, 1.585),
+    "lip_T_center_end":   (0.0, -0.115, 1.582),
+    "lip_T.L":            (0.02, -0.108, 1.582),
+    "lip_T_end.L":        (0.03, -0.105, 1.58),
+    "lip_T.R":            (-0.02, -0.108, 1.582),
+    "lip_T_end.R":        (-0.03, -0.105, 1.58),
+
+    "lip_B_center":       (0.0, -0.108, 1.568),
+    "lip_B_center_end":   (0.0, -0.112, 1.565),
+    "lip_B.L":            (0.02, -0.105, 1.568),
+    "lip_B_end.L":        (0.03, -0.10, 1.567),
+    "lip_B.R":            (-0.02, -0.105, 1.568),
+    "lip_B_end.R":        (-0.03, -0.10, 1.567),
+
+    "ear.L":          (0.11, -0.02, 1.645),
+    "ear_end.L":      (0.13, -0.02, 1.635),
+    "ear.R":          (-0.11, -0.02, 1.645),
+    "ear_end.R":      (-0.13, -0.02, 1.635),
+}
+
+# (nom du bone, joint tête, joint queue, parent, connecté à son parent) —
+# mêmes proportions que tools/generate_test_rig.py (dupliqué ici pour que
+# ce module reste autonome : tools/ n'est pas embarqué dans l'addon
+# installé), réécrit en référence à JOINTS ci-dessus.
+BODY_BONE_JOINTS = [
+    ("hips",        "root",          "hips_top",   None,          False),
+    ("spine",       "root",          "chest_base", "hips",        False),
+    ("chest",       "chest_base",    "neck_base",  "spine",       True),
+    ("neck",        "neck_base",     "head_base",  "chest",       True),
+    ("head",        "head_base",     "head_top",   "neck",        True),
+
+    ("shoulder.L",  "clavicle_in.L", "shoulder.L", "chest",       False),
+    ("upper_arm.L", "shoulder.L",    "elbow.L",    "shoulder.L",  True),
+    ("forearm.L",   "elbow.L",       "wrist.L",    "upper_arm.L", True),
+    ("hand.L",      "wrist.L",       "hand_tip.L", "forearm.L",   True),
+
+    ("shoulder.R",  "clavicle_in.R", "shoulder.R", "chest",       False),
+    ("upper_arm.R", "shoulder.R",    "elbow.R",    "shoulder.R",  True),
+    ("forearm.R",   "elbow.R",       "wrist.R",    "upper_arm.R", True),
+    ("hand.R",      "wrist.R",       "hand_tip.R", "forearm.R",   True),
+
+    ("thigh.L",     "hip.L",         "knee.L",     "hips",        False),
+    ("shin.L",      "knee.L",        "ankle.L",    "thigh.L",     True),
+    ("foot.L",      "ankle.L",       "foot_tip.L", "shin.L",      True),
+
+    ("thigh.R",     "hip.R",         "knee.R",     "hips",        False),
+    ("shin.R",      "knee.R",        "ankle.R",    "thigh.R",     True),
+    ("foot.R",      "ankle.R",       "foot_tip.R", "shin.R",      True),
 ]
 
 # Doigts — même convention que tools/generate_test_hands.py (dupliqué
-# pour la même raison que CANONICAL_BODY_BONES ci-dessus). HAND_TIP_X/
-# HAND_Z doivent rester cohérents avec hand.L/R dans CANONICAL_BODY_BONES.
+# pour la même raison que BODY_BONE_JOINTS ci-dessus). Exclus du système
+# de points de repère (trop nombreux à positionner un par un) : ils
+# restent générés directement en coordonnées, mis à l'échelle
+# uniquement via l'échelle/décalage global de la main — à ajuster en
+# Edit Mode si besoin, comme avant. HAND_TIP_X/HAND_Z doivent rester
+# cohérents avec le joint "hand_tip.L/R" ci-dessus.
 HAND_TIP_X = 0.92
 HAND_Z = 1.45
 FINGER_SPECS = [
@@ -91,53 +218,54 @@ THUMB_SEGMENT_LENGTHS = (0.035, 0.028, 0.022)
 # niveau de détail "intermédiaire" (comparable à un sous-ensemble du
 # meta-rig Rigify, sans aller jusqu'aux paupières/lèvres en plusieurs
 # segments ni langue/dents). Seule une partie est effectivement pilotée
-# par la capture (voir addon/face_mapping.py : jaw, brow.in/out.L/R
-# aujourd'hui) — les autres (eye.*, lid.*, brow.mid.*, nose*, cheek.*,
-# chin, mouth.corner.*, lip.*, ear.*) sont des bones de contrôle pour
+# par la capture (voir addon/face_mapping.py : jaw, brow_in/out.L/R
+# aujourd'hui) — les autres (eye.*, lid.*, brow_mid.*, nose*, cheek.*,
+# chin, mouth_corner.*, lip.*, ear.*) sont des bones de contrôle pour
 # affiner/animer à la main, ou pour brancher plus de coefficients ARKit
 # plus tard sans avoir à régénérer le rig.
-FACE_BONES = [
-    ("jaw",             (0.0, -0.04, 1.60), (0.0, -0.07, 1.545), "head", False),
-    ("chin",            (0.0, -0.07, 1.545), (0.0, -0.09, 1.525), "jaw", True),
+FACE_BONE_JOINTS = [
+    ("jaw",             "jaw_hinge",      "chin_top",       "head", False),
+    ("chin",            "chin_top",       "chin_tip",       "jaw",  True),
 
-    ("eye.L",            (0.045, -0.11, 1.665), (0.045, -0.13, 1.665), "head", False),
-    ("eye.R",            (-0.045, -0.11, 1.665), (-0.045, -0.13, 1.665), "head", False),
-    ("lid.T.L",          (0.045, -0.10, 1.675), (0.045, -0.105, 1.672), "head", False),
-    ("lid.B.L",          (0.045, -0.10, 1.655), (0.045, -0.105, 1.658), "head", False),
-    ("lid.T.R",          (-0.045, -0.10, 1.675), (-0.045, -0.105, 1.672), "head", False),
-    ("lid.B.R",          (-0.045, -0.10, 1.655), (-0.045, -0.105, 1.658), "head", False),
+    ("eye.L",            "eye.L",          "eye_socket.L",         "head", False),
+    ("eye.R",            "eye.R",          "eye_socket.R",         "head", False),
+    ("lid.T.L",          "lid_T.L",        "lid_T_end.L",          "head", False),
+    ("lid.B.L",          "lid_B.L",        "lid_B_end.L",          "head", False),
+    ("lid.T.R",          "lid_T.R",        "lid_T_end.R",          "head", False),
+    ("lid.B.R",          "lid_B.R",        "lid_B_end.R",          "head", False),
 
-    ("brow.in.L",        (0.02, -0.095, 1.695), (0.02, -0.095, 1.705), "head", False),
-    ("brow.mid.L",       (0.045, -0.095, 1.70), (0.045, -0.095, 1.71), "head", False),
-    ("brow.out.L",       (0.07, -0.09, 1.695), (0.07, -0.09, 1.705), "head", False),
-    ("brow.in.R",        (-0.02, -0.095, 1.695), (-0.02, -0.095, 1.705), "head", False),
-    ("brow.mid.R",       (-0.045, -0.095, 1.70), (-0.045, -0.095, 1.71), "head", False),
-    ("brow.out.R",       (-0.07, -0.09, 1.695), (-0.07, -0.09, 1.705), "head", False),
+    ("brow.in.L",        "brow_in.L",      "brow_in_end.L",        "head", False),
+    ("brow.mid.L",       "brow_mid.L",     "brow_mid_end.L",       "head", False),
+    ("brow.out.L",       "brow_out.L",     "brow_out_end.L",       "head", False),
+    ("brow.in.R",        "brow_in.R",      "brow_in_end.R",        "head", False),
+    ("brow.mid.R",       "brow_mid.R",     "brow_mid_end.R",       "head", False),
+    ("brow.out.R",       "brow_out.R",     "brow_out_end.R",       "head", False),
 
-    ("nose",             (0.0, -0.11, 1.63), (0.0, -0.125, 1.60), "head", False),
-    ("nose.tip",         (0.0, -0.125, 1.60), (0.0, -0.135, 1.595), "nose", True),
+    ("nose",             "nose_bridge",    "nose_tip",             "head", False),
+    ("nose.tip",         "nose_tip",       "nose_tip_end",         "nose", True),
 
-    ("cheek.L",          (0.07, -0.08, 1.60), (0.09, -0.07, 1.60), "head", False),
-    ("cheek.R",          (-0.07, -0.08, 1.60), (-0.09, -0.07, 1.60), "head", False),
+    ("cheek.L",          "cheek.L",        "cheek_end.L",          "head", False),
+    ("cheek.R",          "cheek.R",        "cheek_end.R",          "head", False),
 
-    ("mouth.corner.L",   (0.035, -0.105, 1.575), (0.045, -0.10, 1.575), "head", False),
-    ("mouth.corner.R",   (-0.035, -0.105, 1.575), (-0.045, -0.10, 1.575), "head", False),
+    ("mouth.corner.L",   "mouth_corner.L", "mouth_corner_end.L",   "head", False),
+    ("mouth.corner.R",   "mouth_corner.R", "mouth_corner_end.R",   "head", False),
 
-    ("lip.T",            (0.0, -0.11, 1.585), (0.0, -0.115, 1.582), "head", False),
-    ("lip.T.L",          (0.02, -0.108, 1.582), (0.03, -0.105, 1.58), "head", False),
-    ("lip.T.R",          (-0.02, -0.108, 1.582), (-0.03, -0.105, 1.58), "head", False),
-    ("lip.B",            (0.0, -0.108, 1.568), (0.0, -0.112, 1.565), "jaw", False),
-    ("lip.B.L",          (0.02, -0.105, 1.568), (0.03, -0.10, 1.567), "jaw", False),
-    ("lip.B.R",          (-0.02, -0.105, 1.568), (-0.03, -0.10, 1.567), "jaw", False),
+    ("lip.T",            "lip_T_center",   "lip_T_center_end",     "head", False),
+    ("lip.T.L",          "lip_T.L",        "lip_T_end.L",          "head", False),
+    ("lip.T.R",          "lip_T.R",        "lip_T_end.R",          "head", False),
+    ("lip.B",            "lip_B_center",   "lip_B_center_end",     "jaw",  False),
+    ("lip.B.L",          "lip_B.L",        "lip_B_end.L",          "jaw",  False),
+    ("lip.B.R",          "lip_B.R",        "lip_B_end.R",          "jaw",  False),
 
-    ("ear.L",            (0.11, -0.02, 1.645), (0.13, -0.02, 1.635), "head", False),
-    ("ear.R",            (-0.11, -0.02, 1.645), (-0.13, -0.02, 1.635), "head", False),
+    ("ear.L",            "ear.L",          "ear_end.L",            "head", False),
+    ("ear.R",            "ear.R",          "ear_end.R",            "head", False),
 ]
 
-# (nom du bone, rayon du cylindre) — géométrie du corps. Les bones
-# absents de cette table (doigts, jaw, eyebrow.L/R) n'ont pas de
-# géométrie propre : jaw/eyebrow.L/R héritent du poids automatique de la
-# sphère de tête, les doigts n'ont aucune géométrie (voir docstring).
+# (nom du bone, rayon du cylindre) — géométrie du corps (bouton "Générer
+# un personnage de base" uniquement). Les bones absents de cette table
+# (doigts, tous les bones faciaux) n'ont pas de géométrie propre : les
+# bones faciaux héritent du poids automatique de la sphère de tête, les
+# doigts n'ont aucune géométrie (voir docstring).
 BODY_MESH_RADII = {
     "hips": 0.09, "spine": 0.09, "chest": 0.09, "neck": 0.045,
     "shoulder.L": 0.035, "shoulder.R": 0.035,
@@ -152,8 +280,8 @@ BODY_MESH_RADII = {
 # (nom shape key ARKit, centre, rayon, offset) — sous-ensemble de
 # tools/generate_test_face.py : jawOpen/browInnerUp/browDownLeft/
 # browDownRight sont volontairement exclus (pilotés par les bones jaw/
-# eyebrow.L/R à la place — pas de double animation de la même zone par
-# deux mécanismes différents). Coordonnées en espace "monde" absolu
+# brow.in/out.L/R à la place — pas de double animation de la même zone
+# par deux mécanismes différents). Coordonnées en espace "monde" absolu
 # (voir docstring du module), pas relatives à un centre de sphère.
 FACE_SHAPE_KEYS = [
     ("eyeBlinkLeft",     (0.045, -0.09, 1.66), 0.045, (0.0, 0.01, -0.02)),
@@ -163,6 +291,14 @@ FACE_SHAPE_KEYS = [
     ("mouthPucker",      (0.0, -0.105, 1.58), 0.05, (0.0, -0.02, 0.0)),
     ("cheekPuff",        (0.0, -0.05, 1.62), 0.08, (0.0, -0.015, 0.0)),
 ]
+
+# Points de repère déplaçables (generate_reference_points/
+# build_rig_from_points) : préfixe de nom d'objet, taille d'affichage, et
+# nom de la Collection Blender qui les regroupe (pour les sélectionner/
+# masquer/supprimer en bloc facilement depuis l'Outliner).
+POINT_NAME_PREFIX = "CMP_pt."
+POINT_DISPLAY_SIZE = 0.012
+POINTS_COLLECTION_NAME = "CORPUS_MOCAP_RigPoints"
 
 
 def _smoothstep(t: float) -> float:
@@ -198,8 +334,25 @@ def _finger_bones(side_sign: float, side_suffix: str) -> list:
     return bones
 
 
-def _all_bones() -> list:
-    return CANONICAL_BODY_BONES + _finger_bones(1.0, "L") + _finger_bones(-1.0, "R") + FACE_BONES
+def _resolve_bone_coords(bone_joint_defs: list, joint_positions: dict) -> list:
+    """Convertit une liste (nom, joint_tête, joint_queue, parent,
+    connecté) en (nom, coord_tête, coord_queue, parent, connecté) en
+    résolvant chaque nom de joint via `joint_positions` (soit JOINTS —
+    valeurs canoniques —, soit les positions actuelles des Empties de
+    generate_reference_points, voir build_rig_from_points)."""
+    resolved = []
+    for name, head_joint, tail_joint, parent_name, connected in bone_joint_defs:
+        resolved.append((name, tuple(joint_positions[head_joint]), tuple(joint_positions[tail_joint]), parent_name, connected))
+    return resolved
+
+
+def _all_bones(joint_positions: dict | None = None) -> list:
+    if joint_positions is None:
+        joint_positions = JOINTS
+    body = _resolve_bone_coords(BODY_BONE_JOINTS, joint_positions)
+    face = _resolve_bone_coords(FACE_BONE_JOINTS, joint_positions)
+    fingers = _finger_bones(1.0, "L") + _finger_bones(-1.0, "R")
+    return body + fingers + face
 
 
 def _reference_bounds() -> tuple[Vector, Vector]:
@@ -246,7 +399,7 @@ def compute_fit_transform(mesh_obj: bpy.types.Object) -> tuple[float, Vector]:
     return scale, offset
 
 
-def _build_armature(scale: float = 1.0, offset: Vector | None = None) -> bpy.types.Object:
+def _build_armature(joint_positions: dict | None = None, scale: float = 1.0, offset: Vector | None = None) -> bpy.types.Object:
     if offset is None:
         offset = Vector((0.0, 0.0, 0.0))
 
@@ -260,7 +413,7 @@ def _build_armature(scale: float = 1.0, offset: Vector | None = None) -> bpy.typ
 
     bpy.ops.object.mode_set(mode="EDIT")
     edit_bones = armature_data.edit_bones
-    for name, head, tail, parent_name, connected in _all_bones():
+    for name, head, tail, parent_name, connected in _all_bones(joint_positions):
         eb = edit_bones.new(name)
         eb.head = Vector(head) * scale + offset
         eb.tail = Vector(tail) * scale + offset
@@ -306,8 +459,9 @@ def _build_body_mesh() -> bpy.types.Object:
     mesh_obj = bpy.data.objects.new(MESH_NAME, base_mesh)
     bpy.context.collection.objects.link(mesh_obj)
 
+    body_bones = _resolve_bone_coords(BODY_BONE_JOINTS, JOINTS)
     parts = []
-    for name, head, tail, _parent, _connected in CANONICAL_BODY_BONES:
+    for name, head, tail, _parent, _connected in body_bones:
         radius = BODY_MESH_RADII.get(name)
         if radius is None:
             continue
@@ -378,3 +532,72 @@ def generate_rig_for_mesh(mesh_obj: bpy.types.Object) -> bpy.types.Object:
     Retourne l'armature créée."""
     scale, offset = compute_fit_transform(mesh_obj)
     return _build_armature(scale=scale, offset=offset)
+
+
+def _remove_points_collection() -> None:
+    coll = bpy.data.collections.get(POINTS_COLLECTION_NAME)
+    if coll is None:
+        return
+    for obj in list(coll.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    bpy.data.collections.remove(coll)
+
+
+def generate_reference_points(mesh_obj: bpy.types.Object) -> bpy.types.Collection:
+    """Étape 1 du flux en 2 temps (voir docstring du module) : crée un
+    petit Empty par articulation de JOINTS, nommé f"{POINT_NAME_PREFIX}
+    {nom_du_joint}", regroupés dans la Collection POINTS_COLLECTION_NAME.
+    Position initiale = même échelle/décalage que generate_rig_for_mesh
+    (approximation grossière, à corriger à la main). Ré-exécuter supprime
+    et recrée tout le jeu de points (perd tout déplacement déjà fait).
+    Ne crée PAS de points pour les doigts (voir docstring du module).
+    Retourne la Collection créée."""
+    _remove_points_collection()
+    scale, offset = compute_fit_transform(mesh_obj)
+
+    coll = bpy.data.collections.new(POINTS_COLLECTION_NAME)
+    bpy.context.scene.collection.children.link(coll)
+
+    for joint_name, pos in JOINTS.items():
+        point_obj = bpy.data.objects.new(f"{POINT_NAME_PREFIX}{joint_name}", None)
+        point_obj.empty_display_type = "SPHERE"
+        point_obj.empty_display_size = POINT_DISPLAY_SIZE
+        point_obj.location = Vector(pos) * scale + offset
+        coll.objects.link(point_obj)
+
+    return coll
+
+
+def build_rig_from_points() -> bpy.types.Object:
+    """Étape 2 du flux en 2 temps : construit l'armature en lisant la
+    position ACTUELLE (après ajustement manuel par l'utilisateur) de
+    chaque Empty créé par generate_reference_points — donc à appeler
+    après avoir repositionné les points, pas juste après les avoir
+    générés. Un point renommé/supprimé retombe silencieusement sur sa
+    position canonique (JOINTS), avec un print d'avertissement listant
+    les joints concernés plutôt qu'un crash. Lève RuntimeError si aucun
+    point n'existe (generate_reference_points jamais appelé). Ne touche
+    à aucun mesh. Retourne l'armature créée."""
+    coll = bpy.data.collections.get(POINTS_COLLECTION_NAME)
+    if coll is None:
+        raise RuntimeError(
+            "Aucun point de repère trouvé — utilisez d'abord "
+            "\"Générer les points de repère\"."
+        )
+
+    joint_positions = dict(JOINTS)
+    missing = []
+    for joint_name in JOINTS:
+        point_obj = bpy.data.objects.get(f"{POINT_NAME_PREFIX}{joint_name}")
+        if point_obj is None:
+            missing.append(joint_name)
+            continue
+        joint_positions[joint_name] = tuple(point_obj.location)
+
+    if missing:
+        print(
+            f"[CORPUS-MOCAP] {len(missing)} point(s) de repère manquant(s), "
+            f"position canonique utilisée : {', '.join(missing)}"
+        )
+
+    return _build_armature(joint_positions=joint_positions)
