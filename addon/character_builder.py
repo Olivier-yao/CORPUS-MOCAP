@@ -208,13 +208,15 @@ BODY_BONE_JOINTS = [
 
 # Doigts — même convention que tools/generate_test_hands.py (dupliqué
 # pour la même raison que BODY_BONE_JOINTS ci-dessus). Exclus du système
-# de points de repère (trop nombreux à positionner un par un) : ils
-# restent générés directement en coordonnées, mis à l'échelle
-# uniquement via l'échelle/décalage global de la main — à ajuster en
-# Edit Mode si besoin, comme avant. HAND_TIP_X/HAND_Z doivent rester
-# cohérents avec le joint "hand_tip.L/R" ci-dessus.
-HAND_TIP_X = 0.92
-HAND_Z = 1.45
+# de points de repère (trop nombreux à positionner un par un) : leur
+# forme (longueur/écartement des segments) reste toujours celle du
+# personnage de référence, mais leur point d'ancrage suit la position
+# RÉSOLUE du joint "hand_tip.L/R" (voir _all_bones) — donc la valeur
+# canonique par défaut si non touché, ou la position dérivée du point
+# "wrist.L/R" si déplacé via le flux de points de repère. Sans ce
+# rattachement dynamique, déplacer "wrist.L/R" loin de sa position
+# canonique laissait les doigts "flotter" à l'ancien emplacement au lieu
+# de suivre la main (bug repéré par un utilisateur).
 FINGER_SPECS = [
     ("index", 0.025, (0.045, 0.030, 0.025)),
     ("middle", 0.008, (0.050, 0.035, 0.025)),
@@ -426,8 +428,8 @@ def _smoothstep(t: float) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
-def _finger_bones(side_sign: float, side_suffix: str) -> list:
-    hand_tip = Vector((HAND_TIP_X * side_sign, 0.0, HAND_Z))
+def _finger_bones(side_sign: float, side_suffix: str, hand_tip) -> list:
+    hand_tip = Vector(hand_tip)
     hand_bone_name = f"hand.{side_suffix}"
     bones = []
 
@@ -472,7 +474,10 @@ def _all_bones(joint_positions: dict | None = None) -> list:
         joint_positions = JOINTS
     body = _resolve_bone_coords(BODY_BONE_JOINTS, joint_positions)
     face = _resolve_bone_coords(FACE_BONE_JOINTS, joint_positions)
-    fingers = _finger_bones(1.0, "L") + _finger_bones(-1.0, "R")
+    fingers = (
+        _finger_bones(1.0, "L", joint_positions["hand_tip.L"])
+        + _finger_bones(-1.0, "R", joint_positions["hand_tip.R"])
+    )
     return body + fingers + face
 
 

@@ -342,8 +342,15 @@ Trois options, selon votre cas :
   oreilles bien plus grandes), le point dérivé peut nécessiter un ajustage
   manuel après coup (Edit Mode sur l'armature générée) — pas de recalcul
   automatique tenant compte de la géométrie réelle. N'incluent pas les
-  doigts (trop nombreux à positionner un par un) : les bones de doigts
-  restent mis à l'échelle automatiquement, comme pour la variante directe.
+  doigts (trop nombreux à positionner un par un) : leur forme (longueur/
+  écartement des segments) reste toujours celle du personnage de
+  référence, mais leur point d'ancrage **suit désormais la position
+  résolue de "wrist.L/R"** (`_finger_bones` prend le joint "hand_tip.L/R"
+  déjà calculé plutôt que des coordonnées fixes) — **corrigé** : avant ce
+  correctif, déplacer le point du poignet loin de sa position canonique
+  laissait les doigts "flotter" à l'ancien emplacement au lieu de suivre
+  la main (repéré par un utilisateur, revalidé par script autonome avec
+  un déplacement extrême du poignet).
 - Rotation de tête (`facial_transformation_matrixes` → bone "head") :
   mapping d'axes empirique (`addon/face_mapping.py`, `_MP_TO_RIG`), pas
   formellement documenté par MediaPipe — à vérifier/ajuster si un axe
