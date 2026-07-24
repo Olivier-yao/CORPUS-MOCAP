@@ -203,6 +203,20 @@ Trois options, selon votre cas :
 
 ## Limites connues
 
+- **Régénérer un rig pendant un enregistrement en cours** : les boutons
+  "Générer un personnage de base", "Générer un rig pour le modèle
+  sélectionné" et "Construire le rig depuis les points" suppriment et
+  recréent l'objet armature (et son mesh pour le premier) — si l'un
+  d'eux est utilisé pendant qu'un enregistrement cible cette même
+  armature, la référence Python détenue par la capture devient invalide
+  (`ReferenceError: StructRNA of type Object has been removed`),
+  provoquant un crash de la boucle modale. **Corrigé sur deux plans** :
+  ces trois boutons sont désormais désactivés (grisés) tant qu'un
+  enregistrement est en cours (`is_recording`) ; et la boucle de capture
+  vérifie à chaque trame que l'armature/le mesh visage cible existent
+  encore, et s'arrête proprement (message d'avertissement, pas de
+  crash) si ce n'est plus le cas — filet de sécurité pour toute autre
+  cause de suppression (Outliner, Undo...), pas seulement ces boutons.
 - Mapping configurable (`bone_prefix`/`bone_suffix` dans le panneau) :
   un seul préfixe/suffixe **global** appliqué à tous les noms d'os
   attendus — couvre le cas d'un rig auto-généré avec une convention

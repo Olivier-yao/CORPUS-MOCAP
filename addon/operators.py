@@ -97,6 +97,19 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
         settings = context.scene.corpus_mocap
         session = _CaptureSession.instance
 
+        try:
+            session.armature.name  # force une ReferenceError si l'objet a été supprimé entre-temps
+            if session.face_mesh is not None:
+                session.face_mesh.name
+        except ReferenceError:
+            self.report(
+                {'WARNING'},
+                "L'armature ou le mesh visage cible a été supprimé/régénéré pendant "
+                "l'enregistrement (ex. bouton \"Générer...\" recliqué) — arrêt.",
+            )
+            self._stop(context)
+            return {'FINISHED'}
+
         if settings.stability != session.last_sent_stability:
             session.client.send_control({"type": "set_stability", "value": settings.stability})
             session.last_sent_stability = settings.stability
@@ -503,6 +516,10 @@ class MOCAP_OT_generate_base_character(bpy.types.Operator):
     bl_label = "Générer un personnage de base"
     bl_options = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        return not context.scene.corpus_mocap.is_recording
+
     def execute(self, context):
         armature_obj, mesh_obj = character_builder.generate()
 
@@ -536,7 +553,11 @@ class MOCAP_OT_generate_rig_for_mesh(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None and context.active_object.type == 'MESH'
+        return (
+            not context.scene.corpus_mocap.is_recording
+            and context.active_object is not None
+            and context.active_object.type == 'MESH'
+        )
 
     def execute(self, context):
         mesh_obj = context.active_object
@@ -679,7 +700,10 @@ class MOCAP_OT_build_rig_from_points(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return character_builder.POINTS_COLLECTION_NAME in bpy.data.collections
+        return (
+            not context.scene.corpus_mocap.is_recording
+            and character_builder.POINTS_COLLECTION_NAME in bpy.data.collections
+        )
 
     def execute(self, context):
         try:
