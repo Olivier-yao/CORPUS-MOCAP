@@ -699,6 +699,26 @@ def translate_joint_name(joint_name: str) -> str:
     return JOINT_TRANSLATIONS.get(joint_name, joint_name)
 
 
+def mirror_joint_name(joint_name: str) -> str | None:
+    """Nom du joint symétrique (".L" <-> ".R"), ou None si `joint_name`
+    n'a pas de côté (ex. "root", "nose_bridge") — utilisé par le mode
+    symétrie du flux interactif de points de repère (voir
+    MOCAP_OT_generate_reference_points dans operators.py)."""
+    if joint_name.endswith(".L"):
+        return joint_name[:-2] + ".R"
+    if joint_name.endswith(".R"):
+        return joint_name[:-2] + ".L"
+    return None
+
+
+def mirror_position(location, axis_x: float) -> Vector:
+    """Réflexion d'une position autour du plan sagittal X = axis_x (axe
+    gauche/droite du personnage, voir compute_fit_transform) — Y/Z
+    inchangés. Accepte tout objet indexable [0]/[1]/[2] (Vector ou
+    tuple)."""
+    return Vector((2.0 * axis_x - location[0], location[1], location[2]))
+
+
 def clear_reference_points() -> None:
     coll = bpy.data.collections.get(POINTS_COLLECTION_NAME)
     if coll is None:

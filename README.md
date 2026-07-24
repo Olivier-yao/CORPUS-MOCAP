@@ -104,8 +104,14 @@ Trois options, selon votre cas :
     Vertex), `G` pour le déplacer et le coller exactement sur la surface
     de votre modèle, puis **Entrée** pour valider et passer au point
     suivant (**S** pour passer un point sans le déplacer, **Echap** pour
-    arrêter — les points déjà placés sont conservés). 46 points proposés
-    (sur les 78 articulations du rig — le reste est dérivé
+    arrêter — les points déjà placés sont conservés). **Mode symétrie**
+    activé par défaut (touche **X** pour basculer) : à la validation d'un
+    point `.L`/`.R`, son symétrique est automatiquement repositionné en
+    miroir (réflexion autour de l'axe gauche/droite du personnage) —
+    évite de repositionner deux fois chaque articulation sur un modèle
+    symétrique ; désactivez-le si le vôtre ne l'est pas, ou repositionnez
+    le symétrique ensuite s'il ne l'est que localement. 46 points
+    proposés (sur les 78 articulations du rig — le reste est dérivé
     automatiquement, voir Limites connues). Une fois terminé (ou arrêté
     en cours de route), bouton **"2. Construire le rig"** — génère
     l'armature à partir de la position actuelle de chaque point (position

@@ -564,17 +564,22 @@ class MOCAP_OT_generate_reference_points(bpy.types.Operator):
     la Vue 3D, mode Vertex) puis déplacez (G) le point actif pour le
     coller exactement sur la surface de votre modèle, puis Entrée pour
     valider et passer au point suivant. S pour passer un point sans le
-    déplacer (reste à sa position approximative). Echap pour arrêter :
-    les points déjà placés sont conservés, les suivants ne sont pas créés
-    (positions canoniques utilisées automatiquement si vous lancez
-    "Construire le rig depuis les points" sans les avoir tous faits).
-    Une fois terminé, utilisez "Construire le rig depuis les points".
-    Les points sont regroupés dans la collection "CORPUS_MOCAP_RigPoints"
-    (Outliner) — supprimez-les une fois le rig construit si vous n'en
-    avez plus besoin. Ré-exécuter ce bouton supprime et recrée tout le
-    jeu de points (perd tout déplacement déjà fait). N'inclut pas les
-    doigts, et pas les articulations "secondaires" sans signification
-    anatomique propre — voir addon/character_builder.py."""
+    déplacer (reste à sa position approximative). X bascule le **mode
+    symétrie** (activé par défaut) : à la validation d'un point ".L"/".R",
+    son symétrique est automatiquement repositionné en miroir (réflexion
+    autour de l'axe gauche/droite du personnage) — évite de repositionner
+    deux fois chaque articulation sur un modèle symétrique ; désactivez-le
+    si votre modèle ne l'est pas. Echap pour arrêter : les points déjà
+    placés sont conservés, les suivants ne sont pas créés (positions
+    canoniques utilisées automatiquement si vous lancez "Construire le
+    rig depuis les points" sans les avoir tous faits). Une fois terminé,
+    utilisez "Construire le rig depuis les points". Les points sont
+    regroupés dans la collection "CORPUS_MOCAP_RigPoints" (Outliner) —
+    supprimez-les une fois le rig construit si vous n'en avez plus
+    besoin. Ré-exécuter ce bouton supprime et recrée tout le jeu de
+    points (perd tout déplacement déjà fait). N'inclut pas les doigts, et
+    pas les articulations "secondaires" sans signification anatomique
+    propre — voir addon/character_builder.py."""
 
     bl_idname = "mocap.generate_reference_points"
     bl_label = "Générer les points de repère"
@@ -588,7 +593,9 @@ class MOCAP_OT_generate_reference_points(bpy.types.Operator):
         mesh_obj = context.active_object
         self._scale, self._offset = character_builder.compute_fit_transform(mesh_obj)
         self._joints = character_builder.primary_joint_names()
+        self._joints_set = set(self._joints)
         self._index = 0
+        self._symmetry = True
         character_builder.clear_reference_points()
         self._create_current_point(context)
         context.window_manager.modal_handler_add(self)
@@ -605,13 +612,28 @@ class MOCAP_OT_generate_reference_points(bpy.types.Operator):
     def _update_status(self, context):
         joint_name = self._joints[self._index]
         translation = character_builder.translate_joint_name(joint_name)
+        symmetry_label = "activée" if self._symmetry else "désactivée"
         context.workspace.status_text_set(
             f"CORPUS-MOCAP [{self._index + 1}/{len(self._joints)}] positionnez le point pour "
             f"\"{joint_name}\" ({translation}) — G pour déplacer (Snap to Vertex conseillé), "
-            f"puis Entrée pour valider  |  S : passer  |  Echap : arrêter"
+            f"puis Entrée pour valider  |  S : passer  |  X : symétrie {symmetry_label}  |  Echap : arrêter"
         )
 
+    def _mirror_current_point(self) -> None:
+        if not self._symmetry:
+            return
+        joint_name = self._joints[self._index]
+        mirror_name = character_builder.mirror_joint_name(joint_name)
+        if mirror_name is None or mirror_name not in self._joints_set:
+            return
+        current_point = bpy.data.objects.get(f"{character_builder.POINT_NAME_PREFIX}{joint_name}")
+        if current_point is None:
+            return
+        mirror_point = character_builder.create_reference_point(mirror_name, self._scale, self._offset)
+        mirror_point.location = character_builder.mirror_position(current_point.location, self._offset.x)
+
     def _advance(self, context):
+        self._mirror_current_point()
         self._index += 1
         if self._index >= len(self._joints):
             context.workspace.status_text_set(None)
@@ -635,6 +657,11 @@ class MOCAP_OT_generate_reference_points(bpy.types.Operator):
 
         if event.type == 'S' and event.value == 'PRESS':
             return self._advance(context)
+
+        if event.type == 'X' and event.value == 'PRESS':
+            self._symmetry = not self._symmetry
+            self._update_status(context)
+            return {'RUNNING_MODAL'}
 
         return {'PASS_THROUGH'}
 
