@@ -108,69 +108,72 @@ JOINTS: dict[str, tuple[float, float, float]] = {
     "foot_tip.R":    (-0.10, 0.14, 0.02),
 
     # --- Visage (niveau "intermédiaire", voir FACE_BONE_JOINTS) ---
-    "jaw_hinge":      (0.0, -0.04, 1.60),
-    "chin_top":       (0.0, -0.07, 1.545),   # jaw.tail / chin.head
-    "chin_tip":       (0.0, -0.09, 1.525),
+    # Y positif = "devant soi" (voir bone_mapping._landmark_to_vector et
+    # foot_tip.L/R ci-dessus, dont le Y positif fait pointer le pied vers
+    # l'avant) : le visage doit donc être du côté +Y de la tête, pas -Y.
+    "jaw_hinge":      (0.0, 0.04, 1.60),
+    "chin_top":       (0.0, 0.07, 1.545),   # jaw.tail / chin.head
+    "chin_tip":       (0.0, 0.09, 1.525),
 
-    "eye.L":          (0.045, -0.11, 1.665),
-    "eye_socket.L":   (0.045, -0.13, 1.665),
-    "eye.R":          (-0.045, -0.11, 1.665),
-    "eye_socket.R":   (-0.045, -0.13, 1.665),
+    "eye.L":          (0.045, 0.11, 1.665),
+    "eye_socket.L":   (0.045, 0.13, 1.665),
+    "eye.R":          (-0.045, 0.11, 1.665),
+    "eye_socket.R":   (-0.045, 0.13, 1.665),
 
-    "lid_T.L":        (0.045, -0.10, 1.675),
-    "lid_T_end.L":    (0.045, -0.105, 1.672),
-    "lid_B.L":        (0.045, -0.10, 1.655),
-    "lid_B_end.L":    (0.045, -0.105, 1.658),
-    "lid_T.R":        (-0.045, -0.10, 1.675),
-    "lid_T_end.R":    (-0.045, -0.105, 1.672),
-    "lid_B.R":        (-0.045, -0.10, 1.655),
-    "lid_B_end.R":    (-0.045, -0.105, 1.658),
+    "lid_T.L":        (0.045, 0.10, 1.675),
+    "lid_T_end.L":    (0.045, 0.105, 1.672),
+    "lid_B.L":        (0.045, 0.10, 1.655),
+    "lid_B_end.L":    (0.045, 0.105, 1.658),
+    "lid_T.R":        (-0.045, 0.10, 1.675),
+    "lid_T_end.R":    (-0.045, 0.105, 1.672),
+    "lid_B.R":        (-0.045, 0.10, 1.655),
+    "lid_B_end.R":    (-0.045, 0.105, 1.658),
 
-    "brow_in.L":      (0.02, -0.095, 1.695),
-    "brow_in_end.L":  (0.02, -0.095, 1.705),
-    "brow_mid.L":     (0.045, -0.095, 1.70),
-    "brow_mid_end.L": (0.045, -0.095, 1.71),
-    "brow_out.L":     (0.07, -0.09, 1.695),
-    "brow_out_end.L": (0.07, -0.09, 1.705),
-    "brow_in.R":      (-0.02, -0.095, 1.695),
-    "brow_in_end.R":  (-0.02, -0.095, 1.705),
-    "brow_mid.R":     (-0.045, -0.095, 1.70),
-    "brow_mid_end.R": (-0.045, -0.095, 1.71),
-    "brow_out.R":     (-0.07, -0.09, 1.695),
-    "brow_out_end.R": (-0.07, -0.09, 1.705),
+    "brow_in.L":      (0.02, 0.095, 1.695),
+    "brow_in_end.L":  (0.02, 0.095, 1.705),
+    "brow_mid.L":     (0.045, 0.095, 1.70),
+    "brow_mid_end.L": (0.045, 0.095, 1.71),
+    "brow_out.L":     (0.07, 0.09, 1.695),
+    "brow_out_end.L": (0.07, 0.09, 1.705),
+    "brow_in.R":      (-0.02, 0.095, 1.695),
+    "brow_in_end.R":  (-0.02, 0.095, 1.705),
+    "brow_mid.R":     (-0.045, 0.095, 1.70),
+    "brow_mid_end.R": (-0.045, 0.095, 1.71),
+    "brow_out.R":     (-0.07, 0.09, 1.695),
+    "brow_out_end.R": (-0.07, 0.09, 1.705),
 
-    "nose_bridge":    (0.0, -0.11, 1.63),
-    "nose_tip":       (0.0, -0.125, 1.60),   # nose.tail / nose.tip.head
-    "nose_tip_end":   (0.0, -0.135, 1.595),
+    "nose_bridge":    (0.0, 0.11, 1.63),
+    "nose_tip":       (0.0, 0.125, 1.60),   # nose.tail / nose.tip.head
+    "nose_tip_end":   (0.0, 0.135, 1.595),
 
-    "cheek.L":        (0.07, -0.08, 1.60),
-    "cheek_end.L":    (0.09, -0.07, 1.60),
-    "cheek.R":        (-0.07, -0.08, 1.60),
-    "cheek_end.R":    (-0.09, -0.07, 1.60),
+    "cheek.L":        (0.07, 0.08, 1.60),
+    "cheek_end.L":    (0.09, 0.07, 1.60),
+    "cheek.R":        (-0.07, 0.08, 1.60),
+    "cheek_end.R":    (-0.09, 0.07, 1.60),
 
-    "mouth_corner.L":     (0.035, -0.105, 1.575),
-    "mouth_corner_end.L": (0.045, -0.10, 1.575),
-    "mouth_corner.R":     (-0.035, -0.105, 1.575),
-    "mouth_corner_end.R": (-0.045, -0.10, 1.575),
+    "mouth_corner.L":     (0.035, 0.105, 1.575),
+    "mouth_corner_end.L": (0.045, 0.10, 1.575),
+    "mouth_corner.R":     (-0.035, 0.105, 1.575),
+    "mouth_corner_end.R": (-0.045, 0.10, 1.575),
 
-    "lip_T_center":       (0.0, -0.11, 1.585),
-    "lip_T_center_end":   (0.0, -0.115, 1.582),
-    "lip_T.L":            (0.02, -0.108, 1.582),
-    "lip_T_end.L":        (0.03, -0.105, 1.58),
-    "lip_T.R":            (-0.02, -0.108, 1.582),
-    "lip_T_end.R":        (-0.03, -0.105, 1.58),
+    "lip_T_center":       (0.0, 0.11, 1.585),
+    "lip_T_center_end":   (0.0, 0.115, 1.582),
+    "lip_T.L":            (0.02, 0.108, 1.582),
+    "lip_T_end.L":        (0.03, 0.105, 1.58),
+    "lip_T.R":            (-0.02, 0.108, 1.582),
+    "lip_T_end.R":        (-0.03, 0.105, 1.58),
 
-    "lip_B_center":       (0.0, -0.108, 1.568),
-    "lip_B_center_end":   (0.0, -0.112, 1.565),
-    "lip_B.L":            (0.02, -0.105, 1.568),
-    "lip_B_end.L":        (0.03, -0.10, 1.567),
-    "lip_B.R":            (-0.02, -0.105, 1.568),
-    "lip_B_end.R":        (-0.03, -0.10, 1.567),
+    "lip_B_center":       (0.0, 0.108, 1.568),
+    "lip_B_center_end":   (0.0, 0.112, 1.565),
+    "lip_B.L":            (0.02, 0.105, 1.568),
+    "lip_B_end.L":        (0.03, 0.10, 1.567),
+    "lip_B.R":            (-0.02, 0.105, 1.568),
+    "lip_B_end.R":        (-0.03, 0.10, 1.567),
 
-    "ear.L":          (0.11, -0.02, 1.645),
-    "ear_end.L":      (0.13, -0.02, 1.635),
-    "ear.R":          (-0.11, -0.02, 1.645),
-    "ear_end.R":      (-0.13, -0.02, 1.635),
+    "ear.L":          (0.11, 0.02, 1.645),
+    "ear_end.L":      (0.13, 0.02, 1.635),
+    "ear.R":          (-0.11, 0.02, 1.645),
+    "ear_end.R":      (-0.13, 0.02, 1.635),
 }
 
 # (nom du bone, joint tête, joint queue, parent, connecté à son parent) —
@@ -306,12 +309,12 @@ BODY_MESH_RADII = {
 # par deux mécanismes différents). Coordonnées en espace "monde" absolu
 # (voir docstring du module), pas relatives à un centre de sphère.
 FACE_SHAPE_KEYS = [
-    ("eyeBlinkLeft",     (0.045, -0.09, 1.66), 0.045, (0.0, 0.01, -0.02)),
-    ("eyeBlinkRight",    (-0.045, -0.09, 1.66), 0.045, (0.0, 0.01, -0.02)),
-    ("mouthSmileLeft",   (0.035, -0.10, 1.58), 0.045, (0.01, 0.005, 0.015)),
-    ("mouthSmileRight",  (-0.035, -0.10, 1.58), 0.045, (-0.01, 0.005, 0.015)),
-    ("mouthPucker",      (0.0, -0.105, 1.58), 0.05, (0.0, -0.02, 0.0)),
-    ("cheekPuff",        (0.0, -0.05, 1.62), 0.08, (0.0, -0.015, 0.0)),
+    ("eyeBlinkLeft",     (0.045, 0.09, 1.66), 0.045, (0.0, 0.01, -0.02)),
+    ("eyeBlinkRight",    (-0.045, 0.09, 1.66), 0.045, (0.0, 0.01, -0.02)),
+    ("mouthSmileLeft",   (0.035, 0.10, 1.58), 0.045, (0.01, 0.005, 0.015)),
+    ("mouthSmileRight",  (-0.035, 0.10, 1.58), 0.045, (-0.01, 0.005, 0.015)),
+    ("mouthPucker",      (0.0, 0.105, 1.58), 0.05, (0.0, -0.02, 0.0)),
+    ("cheekPuff",        (0.0, 0.05, 1.62), 0.08, (0.0, -0.015, 0.0)),
 ]
 
 # Points de repère déplaçables (create_reference_point/

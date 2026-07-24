@@ -271,7 +271,15 @@ Trois options, selon votre cas :
   et "Générer un rig pour le modèle sélectionné") : `jaw`/`chin`,
   `eye.L/R`, `lid.T/B.L/R`, `brow.in/mid/out.L/R`, `nose`/`nose.tip`,
   `cheek.L/R`, `mouth.corner.L/R`, `lip.T`/`lip.T.L/R`,
-  `lip.B`/`lip.B.L/R`, `ear.L/R`. **Seule une partie est réellement
+  `lip.B`/`lip.B.L/R`, `ear.L/R`. **Corrigé** : les coordonnées du visage
+  (`JOINTS`, `FACE_SHAPE_KEYS`) utilisaient un signe Y inversé, plaçant
+  tout le visage derrière la tête au lieu de devant (Y positif = "devant
+  soi" dans la convention du projet, voir
+  `bone_mapping._landmark_to_vector` et `foot_tip.L/R`) — repéré par un
+  utilisateur ("la tête est dans le sens contraire par rapport au
+  corps"), corrigé et revalidé (script autonome : plus aucun joint du
+  visage en Y négatif, paires symétriques et dérivation des joints
+  secondaires toujours cohérentes). **Seule une partie est réellement
   pilotée par la capture** (voir `face_mapping.py`) : `jaw` (rotation,
   `jawOpen`) et `brow.in/out.L/R` (translation,
   `browInnerUp`/`browOuterUpLeft/Right`/`browDownLeft/Right` —
