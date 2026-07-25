@@ -102,11 +102,19 @@ contournement pour une page HTTP simple), du type :
 
 ```
 1. https://192.168.1.64:8766/  (WebSocket — accepter puis fermer)
-2. https://192.168.1.64:8080/?ws=192.168.1.64:8766  (page principale)
+2. https://192.168.1.64:8080/  (page principale)
 ```
 
+**Ni l'une ni l'autre n'a de `?ws=...` à la fin** (la page déduit
+l'adresse WebSocket de sa propre adresse) — volontairement plus court à
+recopier sur le téléphone, pour éviter de mélanger une ancienne adresse
+avec la nouvelle (déjà arrivé en test réel : IP différente entre la page
+et un `?ws=` recopié d'une session précédente, cause d'un échec de
+connexion silencieux).
+
 Sur le téléphone, **sur le même réseau WiFi que ce PC**, dans cet
-ordre :
+ordre — **toujours les deux adresses fraîchement affichées, jamais une
+notée lors d'une session précédente** :
 1. Ouvrez d'abord l'adresse **1** (le port WebSocket) : le navigateur
    affiche un avertissement de sécurité ("Cette connexion n'est pas
    privée" / "Your connection is not private") — c'est normal, le
@@ -116,7 +124,9 @@ ordre :
    erreur, c'est sans importance, seul le fait d'avoir accepté compte.
 2. Ouvrez ensuite l'adresse **2** (la page principale), acceptez le même
    avertissement de sécurité, puis cliquez "Démarrer la caméra"
-   (autorisez l'accès caméra).
+   (autorisez l'accès caméra). Le champ "Serveur" affiché sur la page
+   doit correspondre exactement à l'IP de l'adresse **1** — s'il diffère,
+   fermez l'onglet et rouvrez les deux adresses depuis le terminal.
 
 L'étape 1 est nécessaire séparément de l'étape 2 : le port WebSocket
 (8766) est une origine différente du port de la page (8080) aux yeux du

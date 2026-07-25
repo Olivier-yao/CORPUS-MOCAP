@@ -41,10 +41,14 @@ const wsStatusEl = document.getElementById("wsStatus");
 const wsAddressEl = document.getElementById("wsAddress");
 const startBtn = document.getElementById("startBtn");
 
-// Adresse du serveur WebSocket passée en paramètre d'URL par phone_server.py
-// (voir l'URL affichée dans le terminal de capture_server), ex.
-// "http://192.168.1.20:8080/?ws=192.168.1.20:8766". À défaut, on essaie le
-// même hôte que la page sur le port WebSocket par défaut.
+// Adresse du serveur WebSocket : déduite du nom d'hôte de CETTE page
+// (même machine, juste un port différent) par défaut — c'est le cas
+// normal, voir phone_server.py qui n'imprime plus d'URL avec un
+// paramètre ?ws=... précisément pour éviter de recopier à la main une
+// adresse plus longue (source d'erreur constatée en test réel : IP
+// différente entre l'hôte de la page et un ?ws= resté d'une session
+// précédente). Un paramètre ?ws=hôte:port explicite reste supporté si
+// vous avez lancé phone_server.py avec des ports personnalisés.
 const params = new URLSearchParams(location.search);
 const wsAddress = params.get("ws") || `${location.hostname}:8766`;
 wsAddressEl.textContent = wsAddress;

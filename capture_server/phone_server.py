@@ -145,11 +145,19 @@ class PhoneBridge:
 
         threading.Thread(target=run_ws_server, daemon=True).start()
 
-        page_url = f"https://{local_ip}:{self.http_port}/?ws={local_ip}:{self.ws_port}"
+        # Adresse SANS le paramètre ?ws=... : phone_client/index.html
+        # déduit déjà l'adresse WebSocket depuis le nom d'hôte de la page
+        # elle-même quand ce paramètre est absent (voir son commentaire
+        # "wsAddress") — plus court à recopier sur le téléphone, donc
+        # moins de risque de mélanger une ancienne adresse (déjà arrivé
+        # en test réel : IP différente entre l'hôte de la page et le
+        # paramètre ?ws=, copié-collé d'une session précédente).
+        page_url = f"https://{local_ip}:{self.http_port}/"
         ws_url = f"https://{local_ip}:{self.ws_port}/"
         print("[phone_server] certificat auto-signé — le navigateur du téléphone va afficher")
         print("[phone_server] un avertissement de sécurité à accepter manuellement (normal, voir README).")
-        print("[phone_server] sur le téléphone (même réseau WiFi que ce PC), dans cet ordre :")
+        print("[phone_server] sur le téléphone (même réseau WiFi que ce PC), dans cet ordre —")
+        print("[phone_server] ne réutilisez jamais une adresse notée lors d'une session précédente :")
         print(f"[phone_server]   1. Ouvrez {ws_url} et acceptez l'avertissement (page vide/erreur, normal)")
         print(f"[phone_server]   2. Ouvrez {page_url} et acceptez l'avertissement, puis \"Démarrer la caméra\"")
 
