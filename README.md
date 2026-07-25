@@ -618,12 +618,27 @@ Trois options, selon votre cas :
   plusieurs téléphones simultanés avec créneaux/filtres indépendants,
   boucle de fusion complète bout en bout via de vraies connexions
   WebSocket + TCP avec un faux client Blender, gestion propre d'une
-  caméra webcam introuvable). Si **plusieurs caméras portent le même
-  rôle** (ex. deux caméras `"pose": true`), la politique de fusion est
-  volontairement simpliste — **"la plus récemment mise à jour gagne"**
-  (`_pick_freshest`), pas de moyenne pondérée ni de triangulation ; peut
-  produire un tremblement/saut visible si les deux caméras ont des
-  latences très différentes. Chaque caméra webcam tourne dans son propre
+  caméra webcam introuvable). Si **plusieurs caméras portent le rôle
+  "face" ou "hands"**, la politique de fusion reste volontairement
+  simpliste — **"la plus récemment mise à jour gagne"** (`_pick_freshest`),
+  pas de moyenne pondérée ni de triangulation.
+
+  Le rôle **"pose"** (corps), lui, utilise `PoseSourceFusion` (pas
+  `_pick_freshest`) depuis que webcam PC + téléphone toutes deux en
+  `"pose": true` ont produit un tremblement/désync constaté en test réel
+  (bascule quasi à chaque trame entre deux points de vue physiquement
+  différents). `PoseSourceFusion` choisit la caméra la plus **confiante**
+  (moyenne de `visibility` MediaPipe sur les 33 points), avec hystérésis
+  (ne bascule que si l'écart de confiance dépasse
+  `POSE_SWITCH_CONFIDENCE_MARGIN`) et lissage sur `POSE_SWITCH_BLEND_FRAMES`
+  trames lors d'une bascule effective — reste une heuristique 2D par
+  caméra, **pas une triangulation 3D** (demanderait un calibrage caméra —
+  position/angle relatifs — qui n'existe pas dans le projet). Validé par
+  script autonome (hystérésis, lissage progressif, disparition d'une
+  caméra, aucune caméra visible) — **pas encore testé en conditions
+  réelles avec deux caméras physiques**.
+
+  Chaque caméra webcam tourne dans son propre
   thread avec sa propre fenêtre d'aperçu OpenCV (`cv2.imshow`/
   `cv2.waitKey` appelés depuis ce thread) — fonctionne sous Windows, mais
   certaines plateformes (notamment macOS) exigent que les fonctions
@@ -761,6 +776,9 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
    combinables (voir Installation §4ter) : ✅ fait, non testé avec du
    vrai matériel multi-caméra (voir Limites connues). Une vraie fusion
    multi-angle de plusieurs caméras sur le MÊME rôle (pour combler une
-   occlusion, ex.) reste un travail futur non commencé — la politique
-   actuelle si deux caméras partagent un rôle est simpliste ("la plus
-   récente gagne", voir Limites connues).
+   occlusion, ex., ce qui demanderait un calibrage caméra) reste un
+   travail futur non commencé — la politique actuelle si deux caméras
+   partagent le rôle "face" ou "hands" est simpliste ("la plus récente
+   gagne") ; le rôle "pose" utilise depuis peu une sélection par
+   confiance avec transition lissée, pas une vraie triangulation non
+   plus (voir Limites connues).

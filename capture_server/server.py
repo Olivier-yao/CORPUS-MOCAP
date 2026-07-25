@@ -655,14 +655,19 @@ class CameraWorker(threading.Thread):
 
 
 def _pick_freshest(candidates: list[tuple | None]) -> tuple | None:
-    """Politique de fusion "dernier arrivé gagne" quand plusieurs
-    caméras sont configurées pour le même rôle (ex. deux caméras avec
-    "pose": true) — PAS de triangulation/moyenne pondérée (voir
-    docstring de camera_config.py et Limites connues du README) :
-    retourne le tuple (…, horodatage monotonic) le plus récent parmi
-    `candidates`, ou None si tous absents. Le dernier élément de chaque
-    tuple est toujours l'horodatage, quelle que soit la forme du reste
-    (get_latest_frame/_face/_hands ont des arités différentes)."""
+    """Politique de fusion "dernier arrivé gagne", utilisée pour
+    visage/mains quand plusieurs caméras partagent ce rôle — PAS de
+    triangulation/moyenne pondérée (voir docstring de camera_config.py et
+    Limites connues du README) : retourne le tuple (…, horodatage
+    monotonic) le plus récent parmi `candidates`, ou None si tous
+    absents. Le dernier élément de chaque tuple est toujours
+    l'horodatage, quelle que soit la forme du reste (get_latest_frame/
+    _face/_hands ont des arités différentes).
+
+    Le rôle "pose" (corps), lui, utilise PoseSourceFusion ci-dessous —
+    voir sa docstring pour pourquoi "dernier arrivé gagne" y posait
+    problème (tremblement/désync constatés en test réel avec webcam PC +
+    téléphone toutes deux en pose)."""
     best = None
     for c in candidates:
         if c is None:
@@ -670,6 +675,117 @@ def _pick_freshest(candidates: list[tuple | None]) -> tuple | None:
         if best is None or c[-1] > best[-1]:
             best = c
     return best
+
+
+# Marge de confiance (0-1, moyenne de "visibility" MediaPipe sur les 33
+# landmarks) qu'une caméra doit dépasser par rapport à la caméra "pose"
+# actuellement active pour qu'on bascule vers elle — évite les
+# allers-retours dus à un simple écart de bruit entre deux caméras
+# toutes les deux correctement visibles (voir PoseSourceFusion).
+POSE_SWITCH_CONFIDENCE_MARGIN = 0.15
+
+# Nombre de trames sur lesquelles lisser (interpoler) une bascule de
+# caméra "pose" effective — à ~30 Hz, 6 trames ≈ 200 ms. Évite le saut
+# brutal entre deux points de vue physiquement différents (webcam PC vs
+# téléphone) au moment précis d'un changement de source.
+POSE_SWITCH_BLEND_FRAMES = 6
+
+
+def _pose_confidence(landmarks: list[dict] | None) -> float:
+    """Confiance moyenne (0-1) d'une trame de landmarks, utilisée par
+    PoseSourceFusion pour comparer deux caméras "pose" — moyenne du champ
+    "visibility" MediaPipe sur les 33 points (0.0 si aucun landmark)."""
+    if not landmarks:
+        return 0.0
+    return sum(lm["visibility"] for lm in landmarks) / len(landmarks)
+
+
+def _blend_landmarks(a: list[dict], b: list[dict], t: float) -> list[dict]:
+    """Interpolation linéaire landmark par landmark (t=0 -> a, t=1 -> b),
+    pour lisser une bascule de caméra "pose" (voir PoseSourceFusion)."""
+    return [
+        {
+            "x": la["x"] + (lb["x"] - la["x"]) * t,
+            "y": la["y"] + (lb["y"] - la["y"]) * t,
+            "z": la["z"] + (lb["z"] - la["z"]) * t,
+            "visibility": la["visibility"] + (lb["visibility"] - la["visibility"]) * t,
+        }
+        for la, lb in zip(a, b)
+    ]
+
+
+class PoseSourceFusion:
+    """Remplace "dernier arrivé gagne" (_pick_freshest) pour le rôle
+    "pose" quand plusieurs caméras le partagent (ex. webcam PC +
+    téléphone, voir cameras.json) : basculer selon l'horodatage le plus
+    récent faisait alterner presque à chaque trame entre deux points de
+    vue physiquement différents (les deux caméras mettent à jour en
+    continu, quasiment au même rythme) — d'où le tremblement/désync
+    constaté en test réel (webcam PC + téléphone toutes deux en "pose").
+
+    Ici, la caméra choisie est celle dont la confiance moyenne
+    (_pose_confidence, moyenne de "visibility" MediaPipe) est la plus
+    haute, avec deux garde-fous :
+    - hystérésis (POSE_SWITCH_CONFIDENCE_MARGIN) : on ne bascule vers une
+      autre caméra que si elle est CLAIREMENT meilleure, pas sur un écart
+      de bruit minime ;
+    - lissage de quelques trames (POSE_SWITCH_BLEND_FRAMES) lors d'une
+      bascule effective, pour éviter le saut brutal entre deux positions
+      physiquement différentes.
+
+    Reste une heuristique 2D par caméra, PAS une triangulation 3D — une
+    vraie fusion géométrique demanderait un calibrage (position/angle
+    relatifs des caméras) qui n'existe pas dans le projet (voir Limites
+    connues du README). Fait "coopérer" les caméras (utilise celle qui
+    voit le mieux à cet instant, transition adoucie) sans prétendre
+    combiner géométriquement les deux points de vue."""
+
+    def __init__(self) -> None:
+        self._active_name: str | None = None
+        self._blend_from: list[dict] | None = None
+        self._blend_frame = 0
+
+    def pick(
+        self, candidates: list[tuple[str, list[dict] | None, bool, float]]
+    ) -> tuple[list[dict], bool, float] | None:
+        """`candidates` : (name, landmarks, tracking_ok, timestamp) pour
+        chaque caméra ayant le rôle "pose" cette trame. Retourne
+        (landmarks, tracking_ok, timestamp), même forme que
+        _pick_freshest, ou None si aucune caméra ne voit rien."""
+        visible = [(name, lm, ok, ts, _pose_confidence(lm) if ok else 0.0) for name, lm, ok, ts in candidates if ok]
+        if not visible:
+            self._active_name = None
+            self._blend_from = None
+            return None
+
+        current = next((c for c in visible if c[0] == self._active_name), None)
+        best = max(visible, key=lambda c: c[4])
+
+        if current is None or (best[0] != current[0] and best[4] > current[4] + POSE_SWITCH_CONFIDENCE_MARGIN):
+            chosen = best
+        else:
+            chosen = current
+
+        if chosen[0] != self._active_name:
+            # Bascule effective : on part de la dernière position connue
+            # de l'ancienne caméra active (si elle voit toujours quelque
+            # chose cette trame, juste moins bien que la nouvelle) pour
+            # lisser la transition ; sinon (caméra disparue) coupe net —
+            # pas de dernière position fiable à disposition.
+            self._blend_from = current[1] if current is not None else None
+            self._blend_frame = 0
+            self._active_name = chosen[0]
+
+        _name, landmarks, tracking_ok, ts, _conf = chosen
+
+        if self._blend_from is not None and self._blend_frame < POSE_SWITCH_BLEND_FRAMES:
+            t = (self._blend_frame + 1) / POSE_SWITCH_BLEND_FRAMES
+            landmarks = _blend_landmarks(self._blend_from, landmarks, t)
+            self._blend_frame += 1
+            if self._blend_frame >= POSE_SWITCH_BLEND_FRAMES:
+                self._blend_from = None
+
+        return (landmarks, tracking_ok, ts)
 
 
 def run_multi_camera(
@@ -681,15 +797,20 @@ def run_multi_camera(
     phone_http_port: int,
     phone_ws_port: int,
 ) -> None:
-    """Phase 5 : une caméra par rôle (voir camera_config.py), pas de
-    fusion multi-angle. Un CameraWorker (thread) par caméra webcam
-    configurée, un PhoneBridge partagé (voir phone_server.py, créneaux
-    nommés) pour toutes les caméras "phone". La boucle principale ici ne
-    capture rien elle-même : elle "fusionne" à sa propre cadence
-    (~30 Hz) les derniers résultats disponibles de chaque caméra
-    concernée par chaque type de message (frame/face/hands) et les
-    envoie à l'addon Blender via le même protocole TCP qu'en mode source
-    unique (protocol.py inchangé)."""
+    """Phase 5 : une caméra par rôle (voir camera_config.py) — pas de
+    triangulation 3D multi-angle (demanderait un calibrage caméra qui
+    n'existe pas ici, voir Limites connues du README). Un CameraWorker
+    (thread) par caméra webcam configurée, un PhoneBridge partagé (voir
+    phone_server.py, créneaux nommés) pour toutes les caméras "phone". La
+    boucle principale ici ne capture rien elle-même : elle "fusionne" à sa
+    propre cadence (~30 Hz) les derniers résultats disponibles de chaque
+    caméra concernée par chaque type de message et les envoie à l'addon
+    Blender via le même protocole TCP qu'en mode source unique
+    (protocol.py inchangé). Rôle "pose" : voir PoseSourceFusion (choix de
+    la caméra la plus confiante, pas la plus récente, avec transition
+    lissée). Rôles "face"/"hands" : voir _pick_freshest (dernier arrivé
+    gagne, en général un seul téléphone/une seule webcam par rôle dans les
+    configurations actuelles)."""
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_sock.bind((host, port))
@@ -722,6 +843,8 @@ def run_multi_camera(
     # à partir des landmarks déjà reçus par PhoneBridge.
     phone_preview_windows: set[str] = set()
 
+    pose_fusion = PoseSourceFusion()
+
     stability_targets: list = list(workers.values())
     if phone_bridge is not None:
         stability_targets.append(phone_bridge)
@@ -740,10 +863,19 @@ def run_multi_camera(
 
             time.sleep(1.0 / 30.0)
 
-            frame_result = _pick_freshest(
-                [workers[c.name].get_latest_frame() for c in config.pose_cameras() if c.name in workers]
-                + ([phone_bridge.get_latest_frame(c.name) for c in phone_cams if c.pose] if phone_bridge is not None else [])
-            )
+            pose_candidates = []
+            for c in config.pose_cameras():
+                if c.name in workers:
+                    result = workers[c.name].get_latest_frame()
+                    if result is not None:
+                        pose_candidates.append((c.name, *result))
+            if phone_bridge is not None:
+                for c in phone_cams:
+                    if c.pose:
+                        result = phone_bridge.get_latest_frame(c.name)
+                        if result is not None:
+                            pose_candidates.append((c.name, *result))
+            frame_result = pose_fusion.pick(pose_candidates)
             face_result = _pick_freshest(
                 [workers[c.name].get_latest_face() for c in config.face_cameras() if c.name in workers]
                 + ([phone_bridge.get_latest_face(c.name) for c in phone_cams if c.face] if phone_bridge is not None else [])
