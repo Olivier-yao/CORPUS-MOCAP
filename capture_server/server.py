@@ -308,6 +308,21 @@ def create_face_landmarker(model_path: str) -> vision.FaceLandmarker:
     return vision.FaceLandmarker.create_from_options(options)
 
 
+def _open_webcam(camera_index: int) -> cv2.VideoCapture:
+    """Ouvre la webcam via DirectShow (Windows) ou le backend par défaut
+    (autres OS). Force le codec MJPG : sans ça, certaines webcams (surtout
+    les webcams intégrées portables) négocient via DirectShow un format
+    brut mal reconnu par OpenCV, ce qui produit une image de bruit coloré/
+    bandes diagonales au lieu du flux réel (constaté en test réel) — MJPG
+    est quasi-universellement supporté et OpenCV sait le décoder."""
+    if sys.platform == "win32":
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(camera_index)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    return cap
+
+
 def create_hand_landmarker(model_path: str) -> vision.HandLandmarker:
     if not os.path.isfile(model_path):
         raise FileNotFoundError(
@@ -369,10 +384,7 @@ def run(
         # bloquer indéfiniment à l'ouverture sur certaines machines même
         # si la caméra fonctionne très bien ailleurs ; DirectShow est
         # nettement plus fiable.
-        if sys.platform == "win32":
-            cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-        else:
-            cap = cv2.VideoCapture(camera_index)
+        cap = _open_webcam(camera_index)
         if not cap.isOpened():
             raise RuntimeError(f"Impossible d'ouvrir la caméra index={camera_index}")
         landmarker = create_pose_landmarker(model_path)
@@ -552,10 +564,7 @@ class CameraWorker(threading.Thread):
     def run(self) -> None:
         window_name = f"CORPUS-MOCAP - {self.config.name}"
 
-        if sys.platform == "win32":
-            cap = cv2.VideoCapture(self.config.webcam_index, cv2.CAP_DSHOW)
-        else:
-            cap = cv2.VideoCapture(self.config.webcam_index)
+        cap = _open_webcam(self.config.webcam_index)
         if not cap.isOpened():
             print(
                 f"[capture_server] ERREUR : impossible d'ouvrir la caméra "
