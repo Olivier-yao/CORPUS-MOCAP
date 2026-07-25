@@ -13,12 +13,18 @@ vers l'addon, bone_mapping.py).
 
 Corps uniquement pour cette première version (pas de visage/mains depuis
 le téléphone — voir la feuille de route du README pour l'extension
-future). Non testé sur un vrai téléphone dans cette session (pas
-d'appareil disponible côté développement) : à valider en conditions
-réelles, itération probable comme pour les autres fonctionnalités du
-projet.
+future).
 
-Nécessite le paquet "websockets" (voir requirements.txt).
+Servi en **HTTPS** (certificat auto-signé, voir tls_cert.py), pas en
+HTTP simple : `getUserMedia` (accès caméra) exige un contexte sécurisé,
+et contrairement à Chrome (qui propose un flag de contournement pour
+une origine `http://` locale), **Safari iOS n'a aucun équivalent** —
+confirmé en test réel (page bloquée sur `getUserMedia`). Le certificat
+auto-signé déclenche un avertissement de sécurité au premier accès sur
+chaque navigateur/appareil, à accepter manuellement une fois (voir
+README) — normal, pas un bug.
+
+Nécessite les paquets "websockets" et "cryptography" (voir requirements.txt).
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ import threading
 
 import websockets.sync.server
 
+import tls_cert
 from protocol import NUM_LANDMARKS
 
 PHONE_CLIENT_DIR = os.path.join(os.path.dirname(__file__), "phone_client")
@@ -120,19 +127,31 @@ class PhoneBridge:
     def start(self) -> None:
         local_ip = get_local_ip()
 
+        # Un certificat frais par démarrage (voir tls_cert.py), pour les
+        # deux serveurs (HTTPS + WSS) — même identité de certificat.
+        http_ssl_context = tls_cert.create_ssl_context(local_ip)
+        ws_ssl_context = tls_cert.create_ssl_context(local_ip)
+
         self._http_server = http.server.ThreadingHTTPServer(("0.0.0.0", self.http_port), _PhoneClientHTTPHandler)
+        self._http_server.socket = http_ssl_context.wrap_socket(self._http_server.socket, server_side=True)
         threading.Thread(target=self._http_server.serve_forever, daemon=True).start()
 
         def run_ws_server() -> None:
-            with websockets.sync.server.serve(self._handle_ws_connection, "0.0.0.0", self.ws_port) as server:
+            with websockets.sync.server.serve(
+                self._handle_ws_connection, "0.0.0.0", self.ws_port, ssl=ws_ssl_context
+            ) as server:
                 self._ws_server = server
                 server.serve_forever()
 
         threading.Thread(target=run_ws_server, daemon=True).start()
 
-        url = f"http://{local_ip}:{self.http_port}/?ws={local_ip}:{self.ws_port}"
-        print("[phone_server] sur le téléphone (même réseau WiFi que ce PC), ouvrez :")
-        print(f"[phone_server]     {url}")
+        page_url = f"https://{local_ip}:{self.http_port}/?ws={local_ip}:{self.ws_port}"
+        ws_url = f"https://{local_ip}:{self.ws_port}/"
+        print("[phone_server] certificat auto-signé — le navigateur du téléphone va afficher")
+        print("[phone_server] un avertissement de sécurité à accepter manuellement (normal, voir README).")
+        print("[phone_server] sur le téléphone (même réseau WiFi que ce PC), dans cet ordre :")
+        print(f"[phone_server]   1. Ouvrez {ws_url} et acceptez l'avertissement (page vide/erreur, normal)")
+        print(f"[phone_server]   2. Ouvrez {page_url} et acceptez l'avertissement, puis \"Démarrer la caméra\"")
 
     def stop(self) -> None:
         if self._http_server is not None:

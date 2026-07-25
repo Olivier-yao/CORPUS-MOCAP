@@ -84,44 +84,66 @@ Le tracking mains peut être désactivé avec `python server.py --no-hands`.
 ### 4bis. Optionnel — compagnon mobile (téléphone comme source)
 
 Alternative à la webcam PC pour le corps (visage/mains pas encore
-disponibles depuis le téléphone) : `requirements.txt` installe déjà le
-paquet `websockets` nécessaire. Aucun modèle supplémentaire à
-télécharger — MediaPipe.js (qui tourne dans le navigateur du téléphone)
-réutilise directement `pose_landmarker_lite.task` déjà en place, servi
-par `capture_server` lui-même.
+disponibles depuis le téléphone) : `requirements.txt` installe déjà les
+paquets `websockets` et `cryptography` nécessaires. Aucun modèle
+supplémentaire à télécharger — MediaPipe.js (qui tourne dans le
+navigateur du téléphone) réutilise directement
+`pose_landmarker_lite.task` déjà en place, servi par `capture_server`
+lui-même.
 
 ```powershell
 python server.py --source phone
 ```
 
-Le terminal affiche une adresse du type
-`http://192.168.1.64:8080/?ws=192.168.1.64:8766` — ouvrez-la dans le
-navigateur du téléphone, **sur le même réseau WiFi que ce PC**.
+Le terminal affiche deux adresses **en HTTPS** (certificat auto-signé —
+voir `tls_cert.py` — généré à chaque démarrage, nécessaire pour l'accès
+caméra sur Safari iOS qui, contrairement à Chrome, n'a aucun réglage de
+contournement pour une page HTTP simple), du type :
 
-**Avant le premier essai** (Chrome Android bloque `getUserMedia` — accès
-caméra — sur toute page HTTP qui n'est pas `localhost`, une IP locale
-n'est pas automatiquement acceptée) :
-1. Sur le téléphone, ouvrez `chrome://flags/#unsafely-treat-insecure-origin-as-secure`.
-2. Dans le champ, entrez l'origine exacte affichée par le serveur (ex.
-   `http://192.168.1.64:8080`, sans le chemin ni le `?ws=...`).
-3. Passez le réglage juste en dessous sur **Enabled**, puis **Relaunch**.
+```
+1. https://192.168.1.64:8766/  (WebSocket — accepter puis fermer)
+2. https://192.168.1.64:8080/?ws=192.168.1.64:8766  (page principale)
+```
 
-Ensuite, rouvrez l'adresse complète (avec `?ws=...`), cliquez "Démarrer
-la caméra" (autorisez l'accès caméra), et le squelette détecté sur le
-téléphone est envoyé au PC. **La fenêtre d'aperçu du PC affiche le
-squelette sur fond noir, pas l'image de la caméra du téléphone** — voulu
-: le téléphone n'envoie jamais son flux vidéo, seulement les points déjà
-détectés (voir Limites connues). Voir `capture_server/phone_client/`
-(page web) et `capture_server/phone_server.py` (serveur HTTP + WebSocket
-côté PC). **Validé en conditions réelles** (Chrome Android).
+Sur le téléphone, **sur le même réseau WiFi que ce PC**, dans cet
+ordre :
+1. Ouvrez d'abord l'adresse **1** (le port WebSocket) : le navigateur
+   affiche un avertissement de sécurité ("Cette connexion n'est pas
+   privée" / "Your connection is not private") — c'est normal, le
+   certificat est auto-signé, pas délivré par une autorité reconnue.
+   Acceptez-le ("Avancé > Continuer" / "Afficher les détails > Visiter
+   ce site") ; la page qui s'affiche ensuite peut être vide ou une
+   erreur, c'est sans importance, seul le fait d'avoir accepté compte.
+2. Ouvrez ensuite l'adresse **2** (la page principale), acceptez le même
+   avertissement de sécurité, puis cliquez "Démarrer la caméra"
+   (autorisez l'accès caméra).
 
-Si l'adresse ne répond pas (page qui charge indéfiniment, `ERR_CONNECTION_TIMED_OUT`) :
-l'IP de la machine change parfois entre deux lancements (renouvellement
-DHCP du WiFi) — **redémarrez `server.py --source phone`** pour réafficher
-l'adresse actuelle plutôt que de réutiliser une ancienne adresse notée
-précédemment. `Test-NetConnection -ComputerName <ip> -Port 8080` en
-PowerShell (champ `SourceAddress` du résultat = IP réelle actuelle de la
-machine) aide à diagnostiquer un décalage d'adresse.
+L'étape 1 est nécessaire séparément de l'étape 2 : le port WebSocket
+(8766) est une origine différente du port de la page (8080) aux yeux du
+navigateur, même avec le même certificat — sans l'avoir déjà acceptée,
+la tentative de connexion WebSocket depuis la page échoue silencieusement.
+
+Le squelette détecté sur le téléphone est envoyé au PC. **La fenêtre
+d'aperçu du PC affiche le squelette sur fond noir, pas l'image de la
+caméra du téléphone** — voulu : le téléphone n'envoie jamais son flux
+vidéo, seulement les points déjà détectés (voir Limites connues). Voir
+`capture_server/phone_client/` (page web) et
+`capture_server/phone_server.py` (serveur HTTPS + WSS côté PC).
+**Validé en conditions réelles sur Chrome Android** (le flux HTTP +
+réglage Chrome utilisé lors de ce test a depuis été remplacé par le
+passage en HTTPS ci-dessus, non re-testé sous cette forme) — Safari iOS
+pas encore validé avec ce correctif HTTPS (motivé par le blocage
+observé sur Safari, mais l'accès caméra effectif via HTTPS reste à
+confirmer).
+
+Si une adresse ne répond pas (page qui charge indéfiniment,
+`ERR_CONNECTION_TIMED_OUT`) : l'IP de la machine change parfois entre
+deux lancements (renouvellement DHCP du WiFi) — **redémarrez
+`server.py --source phone`** pour réafficher les adresses actuelles
+plutôt que de réutiliser une ancienne adresse notée précédemment.
+`Test-NetConnection -ComputerName <ip> -Port 8080` en PowerShell (champ
+`SourceAddress` du résultat = IP réelle actuelle de la machine) aide à
+diagnostiquer un décalage d'adresse.
 
 ### 5. Rig, visage et mains de test
 
@@ -518,23 +540,36 @@ Trois options, selon votre cas :
   fin après un premier test visuel — à ajuster comme les autres
   constantes empiriques du projet si le rendu ne convient pas.
 - **Compagnon mobile** (`capture_server/phone_client/`,
-  `phone_server.py`) : **validé en conditions réelles** (Chrome Android).
-  Corps uniquement (visage/mains pas encore transmis depuis le
-  téléphone — le navigateur n'envoie que les landmarks déjà détectés,
+  `phone_server.py`) : **validé en conditions réelles sur Chrome
+  Android** (avant le passage en HTTPS, non re-testé sous cette forme) —
+  **Safari iOS pas encore validé** avec le correctif HTTPS (motivé par
+  un blocage observé sur Safari, accès caméra effectif à confirmer).
+  Corps uniquement (visage/mains pas encore transmis depuis
+  le téléphone — le navigateur n'envoie que les landmarks déjà détectés,
   pas de flux vidéo, pour rester léger sur le WiFi ; **la fenêtre
   d'aperçu du PC affiche donc le squelette sur fond noir, jamais l'image
   de la caméra du téléphone** — comportement voulu, pas une limitation à
-  corriger). `getUserMedia` (accès caméra) exige un contexte sécurisé :
-  Chrome Android **ne** traite **pas** automatiquement une IP locale en
-  `http://` comme sécurisée (contrairement à ce qu'une note précédente de
-  ce README affirmait à tort) — un réglage manuel unique est nécessaire
-  par téléphone (`chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
-  voir Installation §4bis). L'IP locale de la machine peut changer entre
-  deux lancements de `server.py --source phone` (renouvellement DHCP du
-  WiFi) : toujours utiliser l'adresse fraîchement affichée au démarrage,
-  pas une adresse notée lors d'une session précédente — sinon la
-  connexion échoue silencieusement (`ERR_CONNECTION_TIMED_OUT`,
-  diagnosticable via `Test-NetConnection`). Le sélecteur "Source" du
+  corriger). `getUserMedia` (accès caméra) exige un contexte sécurisé —
+  servi en **HTTPS** (certificat auto-signé, `tls_cert.py`, régénéré à
+  chaque démarrage) plutôt qu'en HTTP simple : une première version
+  utilisait un flag de contournement Chrome
+  (`chrome://flags/#unsafely-treat-insecure-origin-as-secure`), qui
+  fonctionnait sur Android mais n'a **aucun équivalent sur Safari iOS**
+  (confirmé en test réel — `getUserMedia` restait `undefined`) ; le
+  passage en HTTPS élimine le besoin de ce réglage navigateur-spécifique
+  au prix d'un avertissement de certificat auto-signé à accepter
+  manuellement une fois par navigateur/appareil (voir Installation
+  §4bis) — normal pour un serveur de développement local, pas une
+  faille. Le port WebSocket (8766) et le port HTTP (8080) étant deux
+  origines distinctes pour le navigateur, l'avertissement doit être
+  accepté séparément sur chacun (visiter l'adresse WebSocket une fois
+  avant la page principale). L'IP locale de la machine peut changer
+  entre deux lancements de `server.py --source phone` (renouvellement
+  DHCP du WiFi, déjà rencontré en test réel) : toujours utiliser les
+  adresses fraîchement affichées au démarrage, pas une adresse notée
+  lors d'une session précédente — sinon la connexion échoue
+  silencieusement (`ERR_CONNECTION_TIMED_OUT`, diagnosticable via
+  `Test-NetConnection`). Le sélecteur "Source" du
   panneau addon est purement indicatif (voir Utilisation) : il ne pilote
   aucune logique réelle côté addon, seulement `capture_server` (démarré
   séparément) détermine la source effective.
@@ -567,13 +602,15 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
    bouton "Appliquer le style cartoon") — voir Utilisation et Limites
    connues.
 7. **Phase 4 — Compagnon mobile** (un téléphone comme source, via
-   WebSocket local, même pipeline que la webcam PC) : ✅ fait et
-   **validé en conditions réelles** (Chrome Android), **corps seul** —
-   page web (`capture_server/phone_client/`, MediaPipe.js dans le
-   navigateur du téléphone, pas d'app native à installer) + pont
-   HTTP/WebSocket côté PC (`capture_server/phone_server.py`,
-   `server.py --source phone`). Visage/mains pas encore disponibles
-   depuis le téléphone — voir Limites connues (réglage navigateur
+   WebSocket local, même pipeline que la webcam PC) : ✅ fait,
+   **validé en conditions réelles sur Chrome Android** (Safari iOS pas
+   encore confirmé avec le passage en HTTPS, motivé par un blocage
+   observé dessus), **corps seul** — page web
+   (`capture_server/phone_client/`, MediaPipe.js dans le navigateur du
+   téléphone, pas d'app native à installer) + pont HTTPS/WSS côté PC
+   (`capture_server/phone_server.py`, `server.py --source phone`).
+   Visage/mains pas encore disponibles depuis le téléphone — voir
+   Limites connues (réglage navigateur
    nécessaire pour l'accès caméra, IP locale à reprendre au démarrage du
    serveur).
 8. **Phase 5 — Multi-caméra** (plusieurs téléphones à angles différents,

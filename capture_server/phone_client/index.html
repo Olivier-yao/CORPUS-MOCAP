@@ -64,7 +64,14 @@ const POSE_CONNECTIONS = [
 ];
 
 function connectWebSocket() {
-  ws = new WebSocket(`ws://${wsAddress}/`);
+  // La page est servie en HTTPS (certificat auto-signé, voir
+  // phone_server.py) : le WebSocket doit être en WSS (sécurisé), un
+  // navigateur bloque une connexion ws:// non sécurisée depuis une page
+  // https://. Le même certificat couvre le port WebSocket — visitez son
+  // URL une fois pour accepter l'avertissement avant d'ouvrir cette page
+  // (voir README).
+  const wsScheme = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${wsScheme}://${wsAddress}/`);
   ws.onopen = () => { wsStatusEl.textContent = "connecté"; wsStatusEl.className = "ok"; };
   ws.onclose = () => {
     wsStatusEl.textContent = "déconnecté — nouvelle tentative...";
