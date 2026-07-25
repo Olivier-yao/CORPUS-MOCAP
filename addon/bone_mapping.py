@@ -94,6 +94,17 @@ VISIBILITY_THRESHOLD = 0.5
 # bras sans réduire la réactivité de l'inclinaison/direction.
 TORSO_TWIST_DAMPING = 0.5
 
+# Amortissement de l'axe de profondeur (Y) du vecteur de référence de
+# torsion (écart épaule gauche/droite, voir _torso_orientation_matrix) —
+# c'est justement CET axe qui porte le signal "j'ai pivoté sur moi-même"
+# (une épaule se rapproche de la caméra, l'autre s'éloigne), donc on ne
+# peut pas l'amortir autant que SPINE_DEPTH_DAMPING sans perdre le signal
+# utile. Un amortissement partiel réduit la fausse torsion en pose neutre
+# (bruit de profondeur mono-caméra, cause de la régression notée dans
+# d0886fe — "position anormale au neutre") sans annuler une vraie rotation
+# large du buste.
+SPINE_TWIST_DEPTH_DAMPING = 0.6
+
 # Angle max (degrés) qu'une direction de membre (_aim_bone) peut changer
 # en une seule trame (~1/30s à la fréquence de capture). Un mouvement
 # humain réel ne peut pas faire pivoter un bras/une jambe de plus que ça
@@ -302,7 +313,12 @@ def _apply_full_rotation(
     direction — utile car la torsion du buste est sensible à des
     mouvements qui n'en sont pas vraiment (lever un bras déplace un peu
     l'épaule correspondante, ce qui peut être interprété à tort comme une
-    rotation du buste)."""
+    rotation du buste).
+
+    Gèle aussi (même logique que MAX_DIRECTION_CHANGE_DEG dans
+    _aim_bone, absente ici jusqu'à présent — voir régression d0886fe) si
+    la rotation cible s'écarte trop brutalement de la rotation
+    actuellement appliquée au bone depuis la dernière trame."""
     bone = pose_bone.bone
     try:
         rest_world_rot = bone_rest_world_rot(pose_bone, armature_obj)
@@ -320,6 +336,17 @@ def _apply_full_rotation(
             swing = quat @ twist.inverted()
             twist = Quaternion((1.0, 0.0, 0.0, 0.0)).slerp(twist, max(0.0, twist_damping))
             quat = swing @ twist
+
+    if pose_bone.rotation_mode == "QUATERNION":
+        current = pose_bone.rotation_quaternion
+        if current.magnitude > 1e-6:
+            change_deg = math.degrees((quat @ current.inverted()).angle)
+            if change_deg > MAX_DIRECTION_CHANGE_DEG:
+                print(
+                    f"[CORPUS-MOCAP] Saut de rotation anatomiquement improbable "
+                    f"({change_deg:.0f}°) pour l'os '{bone.name}' — gelé cette trame."
+                )
+                return
 
     pose_bone.rotation_mode = "QUATERNION"
     pose_bone.rotation_quaternion = quat
@@ -367,6 +394,7 @@ def _torso_orientation_matrix(
     l'axe "haut". Convention empirique (comme pour la tête) : à ajuster
     si le sens de rotation est inversé lors des premiers tests."""
     up = shoulder_center - hip_center
+    up.y *= SPINE_DEPTH_DAMPING  # même bruit de profondeur que l'aim simple
     if up.length_squared < 1e-8:
         return None
     up = up.normalized()
@@ -378,6 +406,7 @@ def _torso_orientation_matrix(
     # donc partir de left_ref pour que "right" pointe bien vers +X
     # (identité) en pose neutre face caméra.
     right_raw = left_ref - right_ref
+    right_raw.y *= SPINE_TWIST_DEPTH_DAMPING  # voir sa docstring
     if right_raw.length_squared < 1e-8:
         return None
     right = right_raw - up * right_raw.dot(up)  # orthogonalisation (Gram-Schmidt)
@@ -443,34 +472,36 @@ def apply_pose(
 
     spine_chain = _spine_chain_bone_names(prefix, suffix, pose_bones)
     if spine_chain and hips_visible and shoulders_visible:
-        # Retour au simple "aim" (direction bassin->épaules, sans torsion) :
-        # la version à 3 degrés de liberté (_torso_orientation_matrix,
-        # toujours définie plus haut) a produit plusieurs régressions
-        # (position anormale au neutre, rig qui part de travers) malgré
-        # plusieurs correctifs successifs, sans pouvoir être validée en
-        # conditions réelles. À reprendre plus tard avec plus de recul —
-        # potentiellement avec de meilleures données de profondeur
-        # (Phase 5, multi-caméra).
+        # Rotation complète (3 degrés de liberté, torsion incluse) pour
+        # capter la rotation du buste sur lui-même (pivoter sans se
+        # pencher) — 2e tentative après la régression notée dans d0886fe
+        # ("position anormale au neutre", cascade sur les jambes). Cette
+        # fois : (1) uniquement sur le buste, PAS sur "hips" (qui reste
+        # figé en rotation ci-dessus, donc les jambes — enfants de
+        # "hips" — ne sont plus affectées) ; (2) amortissement de l'axe
+        # de profondeur du vecteur de torsion (SPINE_TWIST_DEPTH_DAMPING,
+        # voir _torso_orientation_matrix) pour réduire le faux positif au
+        # neutre ; (3) garde-fou anti-saut dans _apply_full_rotation
+        # (absent lors de la 1ère tentative). Reste expérimental : pas
+        # encore validé en conditions réelles (voir README) — si le buste
+        # part de travers au neutre ou fait des à-coups, le signaler.
         #
         # Rigs à plusieurs segments (ex. spine/spine.001/spine.002,
         # convention Rigify — voir _spine_chain_bone_names) : la MÊME
-        # direction cible est appliquée à chaque segment de la chaîne
+        # orientation cible est appliquée à chaque segment de la chaîne
         # (au lieu de piloter uniquement "spine" et laisser les segments
-        # suivants figés à leur pose de repos). Chaque bone vise
-        # indépendamment cette direction dans son propre repère de repos
-        # *courant* (bone_rest_world_rot lit la matrice actuelle du
-        # parent, déjà mise à jour par le segment précédent) : le résultat
-        # est une colonne qui s'incline comme un seul bloc rigide, pas une
-        # courbe en S répartie — plus simple et plus sûr que de tenter une
-        # répartition pondérée, vu l'historique de régressions ci-dessus.
-        spine_dir = shoulder_center - hip_center
-        spine_dir.y *= SPINE_DEPTH_DAMPING
-        for spine_bone_name in spine_chain:
-            spine_bone = pose_bones.get(spine_bone_name)
-            if spine_bone is None:
-                continue
-            _aim_bone(spine_bone, spine_dir, armature_obj)
-            bpy.context.view_layer.update()
+        # suivants figés à leur pose de repos) — un seul bloc rigide qui
+        # s'incline/tourne ensemble, pas une courbe en S répartie.
+        orientation = _torso_orientation_matrix(
+            hip_center, shoulder_center, lm("left_shoulder"), lm("right_shoulder")
+        )
+        if orientation is not None:
+            for spine_bone_name in spine_chain:
+                spine_bone = pose_bones.get(spine_bone_name)
+                if spine_bone is None:
+                    continue
+                _apply_full_rotation(spine_bone, orientation, armature_obj, twist_damping=TORSO_TWIST_DAMPING)
+                bpy.context.view_layer.update()
 
     if shoulders_visible:
         for clavicle_bone_name, shoulder_landmark_name in CLAVICLE_SEGMENTS:
