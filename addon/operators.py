@@ -143,10 +143,12 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
             hips_bone = session.armature.pose.bones.get(hips_bone_name)
             if hips_bone is not None:
                 hips_bone.keyframe_insert(data_path="location", frame=frame)
+                # "hips" a maintenant aussi une rotation (voir bone_mapping.
+                # apply_pose) : keyframée via la boucle générale ci-dessous
+                # comme les autres os, en plus de sa position ci-dessus —
+                # ne plus l'exclure de cette boucle.
 
             for bone_name in bone_mapping.get_animated_bone_names(prefix, suffix, session.armature):
-                if bone_name == hips_bone_name:
-                    continue
                 pose_bone = session.armature.pose.bones.get(bone_name)
                 if pose_bone is None:
                     continue

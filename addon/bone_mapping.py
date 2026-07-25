@@ -463,12 +463,21 @@ def apply_pose(
                 delta.y * ROOT_TRANSLATION_SCALE_DEPTH,
                 delta.z * ROOT_TRANSLATION_SCALE_LATERAL,
             ))
-        # Pas de rotation sur "hips" : les cuisses en sont enfants dans le
-        # rig, et la moindre instabilité de la rotation du bassin se
-        # répercute en cascade sur le calcul des jambes (_aim_bone lit la
-        # matrice *courante* du parent). Le buste (spine) capte déjà
-        # l'essentiel de la torsion du corps ; le risque de régression sur
-        # les jambes ne vaut pas le gain ici.
+        # Rotation complète (torsion incluse) réactivée ici aussi, avec le
+        # même durcissement que pour le buste (garde-fou anti-saut dans
+        # _apply_full_rotation, amortissement de profondeur dans
+        # _torso_orientation_matrix) : nécessaire pour qu'un tour complet
+        # sur soi-même fasse pivoter le bassin, pas seulement le buste.
+        # Les cuisses (enfants de "hips") lisent la matrice *courante* du
+        # bassin (bone_rest_world_rot) — le view_layer.update() ci-dessous
+        # est indispensable pour qu'elles visent ensuite avec le bon repère.
+        if shoulders_visible:
+            hip_orientation = _torso_orientation_matrix(
+                hip_center, shoulder_center, lm("left_hip"), lm("right_hip")
+            )
+            if hip_orientation is not None:
+                _apply_full_rotation(hips_bone, hip_orientation, armature_obj, twist_damping=TORSO_TWIST_DAMPING)
+                bpy.context.view_layer.update()
 
     spine_chain = _spine_chain_bone_names(prefix, suffix, pose_bones)
     if spine_chain and hips_visible and shoulders_visible:
