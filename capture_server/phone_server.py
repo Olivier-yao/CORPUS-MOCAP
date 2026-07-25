@@ -121,6 +121,12 @@ class _PhoneSlot:
         self.updated_at: float = 0.0
         # (blendshapes, tracking_ok, head_rotation, horodatage monotonic)
         self.latest_face: tuple[dict, bool, list[float] | None, float] | None = None
+        # Points bruts (x, y) du maillage visage — non filtrés, non
+        # transmis à l'addon (voir get_latest_face_points ci-dessous) :
+        # uniquement pour dessiner un vrai maillage dans la fenêtre
+        # d'aperçu PC (run_multi_camera), à la place des coefficients
+        # blend shapes qui ne portent pas de position.
+        self.latest_face_points: list[tuple[float, float]] | None = None
         self.connected = False
 
 
@@ -191,6 +197,15 @@ class PhoneBridge:
             slot = self._slots.get(name)
             return slot.latest_face if slot is not None else None
 
+    def get_latest_face_points(self, name: str = DEFAULT_SLOT_NAME) -> list[tuple[float, float]] | None:
+        """Points bruts (x, y) du maillage visage, pour l'aperçu PC
+        uniquement (voir _PhoneSlot.latest_face_points) — pas de forme
+        partagée avec CameraWorker, cet accesseur n'est appelé que dans
+        run_multi_camera pour dessiner la fenêtre dédiée à cette caméra."""
+        with self._lock:
+            slot = self._slots.get(name)
+            return slot.latest_face_points if slot is not None else None
+
     def set_stability(self, value: float) -> None:
         with self._lock:
             self._stability = value
@@ -225,11 +240,14 @@ class PhoneBridge:
                 elif msg_type == "face":
                     raw_blendshapes = payload.get("blendshapes")
                     raw_head_rotation = payload.get("head_rotation")
+                    raw_points = payload.get("points")
                     if isinstance(raw_blendshapes, dict):
                         with self._lock:
                             blendshapes = slot.blendshape_filter.process(raw_blendshapes)
                             head_rotation = slot.head_rotation_filter.process(raw_head_rotation)
                             slot.latest_face = (blendshapes, True, head_rotation, time.monotonic())
+                            if isinstance(raw_points, list):
+                                slot.latest_face_points = [(p["x"], p["y"]) for p in raw_points]
         except Exception as exc:  # connexion coupée, réseau instable, etc.
             print(f"[phone_server] connexion téléphone '{name}' interrompue : {exc}")
         finally:
@@ -237,6 +255,7 @@ class PhoneBridge:
                 slot.connected = False
                 slot.latest_landmarks = None
                 slot.latest_face = None
+                slot.latest_face_points = None
             print(f"[phone_server] téléphone déconnecté (caméra '{name}')")
 
     def start(self, cameras: list[tuple[str, bool, bool]] | None = None) -> None:

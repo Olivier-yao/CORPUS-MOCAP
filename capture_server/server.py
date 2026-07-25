@@ -396,6 +396,7 @@ def run(
     client: ClientConnection | None = None
 
     if show_preview:
+        cv2.namedWindow(PREVIEW_WINDOW_NAME, cv2.WINDOW_NORMAL)
         print(f"[capture_server] aperçu ouvert dans une fenêtre séparée ({PREVIEW_WINDOW_NAME})")
 
     try:
@@ -563,6 +564,8 @@ class CameraWorker(threading.Thread):
 
     def run(self) -> None:
         window_name = f"CORPUS-MOCAP - {self.config.name}"
+        if self.show_preview:
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
         cap = _open_webcam(self.config.webcam_index)
         if not cap.isOpened():
@@ -712,6 +715,13 @@ def run_multi_camera(
         phone_bridge = PhoneBridge(phone_http_port, phone_ws_port)
         phone_bridge.start(cameras=[(c.name, c.pose, c.face) for c in phone_cams])
 
+    # Une fenêtre d'aperçu par caméra téléphone (créée à la demande, au
+    # premier passage) : contrairement aux webcams (flux vidéo réel via
+    # CameraWorker), un téléphone n'a pas de flux vidéo côté PC — la
+    # fenêtre affiche donc uniquement le squelette/maillage sur fond noir,
+    # à partir des landmarks déjà reçus par PhoneBridge.
+    phone_preview_windows: set[str] = set()
+
     stability_targets: list = list(workers.values())
     if phone_bridge is not None:
         stability_targets.append(phone_bridge)
@@ -741,6 +751,38 @@ def run_multi_camera(
             hands_result = _pick_freshest(
                 [workers[c.name].get_latest_hands() for c in config.hands_cameras() if c.name in workers]
             )
+
+            if show_preview and phone_bridge is not None:
+                for cam in phone_cams:
+                    win_name = f"CORPUS-MOCAP - {cam.name}"
+                    if win_name not in phone_preview_windows:
+                        cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+                        phone_preview_windows.add(win_name)
+
+                    cam_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                    if cam.pose:
+                        cam_frame_result = phone_bridge.get_latest_frame(cam.name)
+                        if cam_frame_result is not None:
+                            cam_landmarks, cam_tracking_ok, _ts = cam_frame_result
+                            draw_preview(cam_frame, cam_landmarks, cam_tracking_ok)
+                    if cam.face:
+                        cam_face_result = phone_bridge.get_latest_face(cam.name)
+                        cam_face_tracking_ok = cam_face_result is not None and cam_face_result[1]
+                        draw_face_preview(cam_frame, phone_bridge.get_latest_face_points(cam.name))
+                        face_status = "Visage OK" if cam_face_tracking_ok else "Visage non détecté"
+                        face_color = (0, 200, 0) if cam_face_tracking_ok else (0, 0, 220)
+                        cv2.putText(cam_frame, face_status, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, face_color, 2)
+                    if not phone_bridge.is_connected(cam.name):
+                        cv2.putText(
+                            cam_frame, "En attente du telephone...", (10, 75),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2,
+                        )
+                    cv2.putText(
+                        cam_frame, cam.name, (10, cam_frame.shape[0] - 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2,
+                    )
+                    cv2.imshow(win_name, cam_frame)
+                cv2.waitKey(1)
 
             if client is not None:
                 client.poll_control_messages()

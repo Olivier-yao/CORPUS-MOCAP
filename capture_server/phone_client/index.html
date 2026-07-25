@@ -33,11 +33,12 @@
 </div>
 
 <script type="module">
-import { PoseLandmarker, FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+import { PoseLandmarker, FaceLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const drawingUtils = new DrawingUtils(ctx);
 const statusEl = document.getElementById("status");
 const wsStatusEl = document.getElementById("wsStatus");
 const wsAddressEl = document.getElementById("wsAddress");
@@ -111,8 +112,6 @@ function connectWebSocket() {
 }
 
 function drawSkeleton(landmarks) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   ctx.strokeStyle = "#4caf50";
   ctx.fillStyle = "#4caf50";
   ctx.lineWidth = 3;
@@ -157,6 +156,9 @@ function loop() {
   let poseOk = false;
   let faceOk = false;
 
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
   if (poseLandmarker) {
     const result = poseLandmarker.detectForVideo(video, nowMs);
     if (result.landmarks && result.landmarks.length > 0) {
@@ -170,29 +172,34 @@ function loop() {
         ws.send(JSON.stringify({ type: "pose", landmarks }));
       }
       poseOk = true;
-    } else {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     }
   }
 
   if (faceLandmarker) {
     const result = faceLandmarker.detectForVideo(video, nowMs);
+    const faceLm = result.faceLandmarks && result.faceLandmarks.length > 0 ? result.faceLandmarks[0] : null;
+    if (faceLm) {
+      // Maillage complet (468 points) affiché en overlay, pour vérifier
+      // visuellement le cadrage/la qualité de détection sur le téléphone
+      // lui-même (même principe que drawSkeleton pour le corps).
+      drawingUtils.drawConnectors(faceLm, FaceLandmarker.FACE_LANDMARKS_TESSELATION, {
+        color: "#C0C0C070", lineWidth: 1,
+      });
+    }
     if (result.faceBlendshapes && result.faceBlendshapes.length > 0) {
       const blendshapes = {};
       for (const cat of result.faceBlendshapes[0].categories) {
         blendshapes[cat.categoryName] = cat.score;
       }
       const headRotation = extractHeadRotation(result.facialTransformationMatrixes);
+      // "points" (x/y uniquement, pas de z/index) : repris tels quels côté
+      // PC (voir phone_server.py) uniquement pour dessiner le maillage
+      // dans la fenêtre d'aperçu multi-caméra — pas utilisé par l'addon.
+      const points = faceLm ? faceLm.map((p) => ({ x: p.x, y: p.y })) : null;
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "face", blendshapes, head_rotation: headRotation }));
+        ws.send(JSON.stringify({ type: "face", blendshapes, head_rotation: headRotation, points }));
       }
       faceOk = true;
-    }
-    if (!poseLandmarker) {
-      // Pas de squelette à dessiner : on affiche quand même le flux vidéo.
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     }
   }
 

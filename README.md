@@ -194,9 +194,13 @@ téléphones combinables librement.
    côté téléphone) ; une configuration invalide est rejetée au
    démarrage avec un message d'erreur explicite (nom dupliqué, index
    webcam réutilisé, rôle vide, `hands` sur un téléphone...).
-   `"preview"` (bool, défaut `true`) : fenêtre d'aperçu OpenCV pour
-   cette caméra (webcam uniquement — un téléphone affiche son propre
-   aperçu sur son propre écran, voir §4bis).
+   `"preview"` (bool, défaut `true`) : fenêtre d'aperçu OpenCV avec le
+   flux vidéo réel (webcam uniquement). **Chaque caméra `"phone"` a en
+   plus, automatiquement (non désactivable via `"preview"`), sa propre
+   fenêtre PC dédiée** — squelette (corps) et/ou maillage (visage) sur
+   fond noir, comme décrit en §4bis, en complément de l'aperçu sur
+   l'écran du téléphone lui-même. Toutes les fenêtres d'aperçu (webcam
+   et téléphone) sont redimensionnables.
 
 2. Lancez :
 
