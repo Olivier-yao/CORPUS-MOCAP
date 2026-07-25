@@ -62,7 +62,15 @@ def _generate_cert_and_key(local_ip: str) -> tuple[bytes, bytes]:
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(days=1))
-        .not_valid_after(now + datetime.timedelta(days=3650))
+        # iOS/Safari rejette silencieusement (boucle sur l'avertissement,
+        # sans possibilité de "visiter quand même") tout certificat TLS
+        # serveur dont la validité dépasse 825 jours, exigence Apple
+        # depuis iOS 13 — confirmé en test réel (blocage systématique
+        # avant même d'atteindre la page). Une validité de 2 jours
+        # suffit largement puisqu'un certificat est régénéré à chaque
+        # démarrage de phone_server.py, jamais réutilisé d'une session à
+        # l'autre.
+        .not_valid_after(now + datetime.timedelta(days=2))
         .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
         .sign(key, hashes.SHA256())
     )

@@ -551,10 +551,21 @@ Trois options, selon votre cas :
   constantes empiriques du projet si le rendu ne convient pas.
 - **Compagnon mobile** (`capture_server/phone_client/`,
   `phone_server.py`) : **validé en conditions réelles sur Chrome
-  Android** (avant le passage en HTTPS, non re-testé sous cette forme) —
-  **Safari iOS pas encore validé** avec le correctif HTTPS (motivé par
-  un blocage observé sur Safari, accès caméra effectif à confirmer).
-  Corps uniquement (visage/mains pas encore transmis depuis
+  Android (HTTPS)** — **Safari iOS toujours pas confirmé** : bloqué sur
+  la boucle d'avertissement de certificat en test réel, cause
+  identifiée et corrigée (**durée de validité du certificat limitée à
+  2 jours**, `tls_cert.py` — iOS/Safari rejette silencieusement, sans
+  possibilité de "visiter quand même", tout certificat serveur dépassant
+  825 jours de validité, exigence Apple depuis iOS 13, indépendante du
+  fait que ce soit auto-signé ; sans incidence puisque le certificat est
+  de toute façon régénéré à chaque démarrage), **mais pas encore
+  reconfirmé sur un vrai iPhone après ce correctif**. Un second piège
+  déjà corrigé : les URLs affichées par `phone_server.py` **n'incluent
+  plus le paramètre `?ws=...`** — la page déduit l'adresse WebSocket de
+  son propre nom d'hôte, pour éviter de mélanger une IP différente entre
+  la page et ce paramètre lors d'un copié-collé (déjà arrivé en test
+  réel, cause d'un échec de connexion). Corps uniquement (visage/mains
+  pas encore transmis depuis
   le téléphone — le navigateur n'envoie que les landmarks déjà détectés,
   pas de flux vidéo, pour rester léger sur le WiFi ; **la fenêtre
   d'aperçu du PC affiche donc le squelette sur fond noir, jamais l'image
