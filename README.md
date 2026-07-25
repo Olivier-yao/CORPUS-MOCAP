@@ -85,13 +85,16 @@ Le tracking mains peut être désactivé avec `python server.py --no-hands`.
 
 ### 4bis. Optionnel — compagnon mobile (téléphone comme source)
 
-Alternative à la webcam PC pour le corps (visage/mains pas encore
-disponibles depuis le téléphone) : `requirements.txt` installe déjà les
-paquets `websockets` et `cryptography` nécessaires. Aucun modèle
-supplémentaire à télécharger — MediaPipe.js (qui tourne dans le
-navigateur du téléphone) réutilise directement
-`pose_landmarker_lite.task` déjà en place, servi par `capture_server`
-lui-même.
+Alternative à la webcam PC pour le corps : `requirements.txt` installe
+déjà les paquets `websockets` et `cryptography` nécessaires. Aucun
+modèle supplémentaire à télécharger — MediaPipe.js (qui tourne dans le
+navigateur du téléphone) réutilise directement les fichiers `.task`
+déjà en place, servis par `capture_server` lui-même. Ce mode
+(`--source phone`, un seul téléphone, hors fichier de configuration)
+reste corps uniquement ; **un téléphone dédié au visage (voire au
+visage + au corps ensemble) est possible via le mode multi-caméra à
+rôles, voir §4ter** — les mains restent indisponibles depuis un
+téléphone dans tous les cas.
 
 ```powershell
 python server.py --source phone
@@ -176,20 +179,21 @@ téléphones combinables librement.
    ```json
    {
      "cameras": [
-       {"name": "corps",  "source": "webcam:0", "pose": true},
-       {"name": "visage", "source": "webcam:1", "face": true},
-       {"name": "mains",  "source": "phone",    "pose": true}
+       {"name": "corps_webcam",    "source": "webcam:0", "pose": true},
+       {"name": "corps_telephone", "source": "phone",    "pose": true},
+       {"name": "visage",          "source": "phone",    "face": true}
      ]
    }
    ```
 
    `"source"` : `"webcam:<index>"` (index OpenCV, comme `--camera`) ou
    `"phone"`. `"pose"`/`"face"`/`"hands"` (bool) : quels modèles
-   MediaPipe tourner sur cette caméra — **une source `"phone"` ne peut
-   avoir que `"pose": true`** (visage/mains pas encore détectés côté
-   téléphone, voir §4bis) ; une configuration invalide est rejetée au
+   MediaPipe tourner sur cette caméra — **une source `"phone"` peut
+   avoir `"pose"` et/ou `"face"` à `true`** (détection dans le
+   navigateur, voir §4bis), mais pas encore `"hands"` (non implémenté
+   côté téléphone) ; une configuration invalide est rejetée au
    démarrage avec un message d'erreur explicite (nom dupliqué, index
-   webcam réutilisé, rôle vide, `face`/`hands` sur un téléphone...).
+   webcam réutilisé, rôle vide, `hands` sur un téléphone...).
    `"preview"` (bool, défaut `true`) : fenêtre d'aperçu OpenCV pour
    cette caméra (webcam uniquement — un téléphone affiche son propre
    aperçu sur son propre écran, voir §4bis).
@@ -622,6 +626,22 @@ Trois options, selon votre cas :
   d'interface graphique OpenCV tournent sur le thread principal ; non
   vérifié sur ces plateformes. La boucle de fusion tourne à ~30 Hz fixe,
   indépendamment du framerate réel de chaque caméra individuelle.
+- **Visage sur téléphone** (`phone_client/index.html`, `FaceLandmarker`
+  MediaPipe.js) : comme le reste de la multi-caméra, validé uniquement
+  par scripts autonomes (message "face" reçu/filtré/routé par créneau
+  nommé, intégration bout en bout avec un faux client Blender) —
+  **jamais testé avec un vrai téléphone**. Point à vérifier en premier
+  lors du premier test réel : l'orientation de `head_rotation` — la
+  matrice 4x4 renvoyée par `facialTransformationMatrixes` en JS est
+  supposée column-major (`extractHeadRotation` dans index.html), par
+  analogie avec `extract_head_rotation` côté Python (webcam), mais cette
+  hypothèse n'a pas été vérifiée empiriquement ; si la tête tourne dans
+  le mauvais sens une fois pilotée dans Blender, c'est le premier
+  suspect. Un téléphone peut cumuler `"pose"` et `"face"` dans la
+  configuration (les deux détecteurs tournent en parallèle sur le même
+  flux caméra) mais cela n'a pas non plus été testé en conditions
+  réelles — vraisemblablement plus lourd pour un téléphone ancien (voir
+  la limite iPhone SE ci-dessous).
 - **Style cartoon** (`addon/cartoon_style.py`) : constantes empiriques
   (`AMPLIFICATION_MAX`, `SQUASH_STRETCH_VELOCITY_DEG_PER_FRAME`,
   `SQUASH_STRETCH_MAX`, `EASING_MIN/MAX_HANDLE_FRACTION`), non testées en
@@ -656,13 +676,17 @@ Trois options, selon votre cas :
   page déduit l'adresse WebSocket de son propre nom d'hôte, pour éviter
   de mélanger une IP différente entre la page et ce paramètre lors d'un
   copié-collé (déjà arrivé en test
-  réel, cause d'un échec de connexion). Corps uniquement (visage/mains
-  pas encore transmis depuis
-  le téléphone — le navigateur n'envoie que les landmarks déjà détectés,
-  pas de flux vidéo, pour rester léger sur le WiFi ; **la fenêtre
-  d'aperçu du PC affiche donc le squelette sur fond noir, jamais l'image
-  de la caméra du téléphone** — comportement voulu, pas une limitation à
-  corriger). `getUserMedia` (accès caméra) exige un contexte sécurisé —
+  réel, cause d'un échec de connexion). Le mode `--source phone` (un
+  seul téléphone, hors configuration multi-caméra) reste corps
+  uniquement ; le visage est disponible depuis un téléphone via le
+  fichier de configuration (§4ter, voir aussi la limite "Visage sur
+  téléphone" ci-dessus) — les mains restent indisponibles depuis un
+  téléphone dans tous les cas. Le navigateur n'envoie que les landmarks/
+  coefficients déjà détectés, jamais de flux vidéo, pour rester léger
+  sur le WiFi ; **la fenêtre d'aperçu du PC affiche donc le squelette
+  sur fond noir, jamais l'image de la caméra du téléphone** —
+  comportement voulu, pas une limitation à corriger. `getUserMedia`
+  (accès caméra) exige un contexte sécurisé —
   servi en **HTTPS** (certificat auto-signé, `tls_cert.py`, régénéré à
   chaque démarrage) plutôt qu'en HTTP simple : une première version
   utilisait un flag de contournement Chrome

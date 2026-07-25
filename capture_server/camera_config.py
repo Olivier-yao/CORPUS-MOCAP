@@ -28,10 +28,11 @@ Exemple (voir aussi cameras.example.json) :
   quelle entrée de la configuration il représente).
 - "pose"/"face"/"hands" (bool, défaut False) : quels modèles MediaPipe
   tourner sur cette caméra — donc quel(s) type(s) de message elle
-  alimente. **Une source "phone" ne peut avoir que "pose": true** (le
-  visage/les mains ne sont pas encore détectés côté téléphone, voir
-  phone_client/) — un rôle face/hands sur une source phone est une
-  erreur de configuration, rejetée au chargement.
+  alimente. **Une source "phone" peut avoir "pose" et/ou "face" à
+  true** (détection dans le navigateur via MediaPipe.js — voir
+  phone_client/), mais pas encore "hands" (non implémenté côté
+  téléphone) — un rôle hands sur une source phone est une erreur de
+  configuration, rejetée au chargement.
 - "preview" (bool, défaut True) : ouvrir une fenêtre d'aperçu OpenCV
   pour cette caméra (webcam uniquement — un téléphone a son propre
   aperçu affiché sur son propre écran).
@@ -123,11 +124,11 @@ def _parse_camera(raw: dict) -> CameraConfig:
             "(une caméra qui ne capture rien n'a pas d'utilité)"
         )
 
-    if source_type == "phone" and (face or hands):
+    if source_type == "phone" and hands:
         raise CameraConfigError(
-            f"caméra '{name}' : \"face\"/\"hands\" non supportés sur une source \"phone\" "
-            "pour l'instant (MediaPipe.js ne détecte que la pose sur le téléphone, "
-            "voir phone_client/) — seul \"pose\": true est valide ici"
+            f"caméra '{name}' : \"hands\" non supporté sur une source \"phone\" "
+            "pour l'instant (MediaPipe.js ne détecte pas encore les mains sur le "
+            "téléphone, voir phone_client/) — seuls \"pose\"/\"face\" sont valides ici"
         )
 
     return CameraConfig(

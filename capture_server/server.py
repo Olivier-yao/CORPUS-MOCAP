@@ -701,7 +701,7 @@ def run_multi_camera(
     phone_bridge: PhoneBridge | None = None
     if phone_cams:
         phone_bridge = PhoneBridge(phone_http_port, phone_ws_port)
-        phone_bridge.start(camera_names=[c.name for c in phone_cams])
+        phone_bridge.start(cameras=[(c.name, c.pose, c.face) for c in phone_cams])
 
     stability_targets: list = list(workers.values())
     if phone_bridge is not None:
@@ -723,10 +723,11 @@ def run_multi_camera(
 
             frame_result = _pick_freshest(
                 [workers[c.name].get_latest_frame() for c in config.pose_cameras() if c.name in workers]
-                + [phone_bridge.get_latest_frame(c.name) for c in phone_cams if phone_bridge is not None]
+                + ([phone_bridge.get_latest_frame(c.name) for c in phone_cams if c.pose] if phone_bridge is not None else [])
             )
             face_result = _pick_freshest(
                 [workers[c.name].get_latest_face() for c in config.face_cameras() if c.name in workers]
+                + ([phone_bridge.get_latest_face(c.name) for c in phone_cams if c.face] if phone_bridge is not None else [])
             )
             hands_result = _pick_freshest(
                 [workers[c.name].get_latest_hands() for c in config.hands_cameras() if c.name in workers]

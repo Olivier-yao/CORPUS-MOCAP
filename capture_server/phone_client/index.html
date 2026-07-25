@@ -24,6 +24,7 @@
   <div id="hud">
     CORPUS-MOCAP — Compagnon mobile<br>
     Caméra : <span id="camName">—</span><br>
+    Rôle(s) : <span id="roles">—</span><br>
     Serveur : <span id="wsAddress">—</span><br>
     Connexion : <span id="wsStatus" class="bad">déconnecté</span><br>
     Détection : <span id="status" class="bad">en attente</span>
@@ -32,7 +33,7 @@
 </div>
 
 <script type="module">
-import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+import { PoseLandmarker, FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
@@ -41,6 +42,7 @@ const statusEl = document.getElementById("status");
 const wsStatusEl = document.getElementById("wsStatus");
 const wsAddressEl = document.getElementById("wsAddress");
 const camNameEl = document.getElementById("camName");
+const rolesEl = document.getElementById("roles");
 const startBtn = document.getElementById("startBtn");
 
 // Adresse du serveur WebSocket : déduite du nom d'hôte de CETTE page
@@ -64,8 +66,19 @@ wsAddressEl.textContent = wsAddress;
 const camName = params.get("cam");
 camNameEl.textContent = camName || "(par défaut, non nommée)";
 
+// Quel(s) détecteur(s) MediaPipe.js charger sur CE téléphone (voir
+// phone_server.py:start(), qui génère ces paramètres depuis
+// "pose"/"face" de camera_config.py). Sans paramètre de rôle du tout
+// (mode historique, un seul téléphone — `server.py --source phone`) :
+// pose uniquement, pour rester compatible avec les URLs déjà notées
+// avant l'ajout du visage.
+const wantPose = params.get("pose") === "1" || (!params.has("pose") && !params.has("face"));
+const wantFace = params.get("face") === "1";
+rolesEl.textContent = [wantPose && "corps", wantFace && "visage"].filter(Boolean).join(" + ") || "—";
+
 let ws = null;
 let poseLandmarker = null;
+let faceLandmarker = null;
 let running = false;
 
 // Connexions squelette (mêmes paires que capture_server/server.py:POSE_CONNECTIONS)
@@ -117,29 +130,77 @@ function drawSkeleton(landmarks) {
   }
 }
 
+// Sous-matrice de rotation 3x3 (9 floats, ligne par ligne) extraite de
+// facialTransformationMatrixes — même format que extract_head_rotation()
+// dans server.py (côté webcam PC), pour que l'addon (bone_mapping) n'ait
+// pas à distinguer la provenance de la donnée. La Matrix de MediaPipe.js
+// (4x4, propriété "data") est documentée en column-major : élément
+// (ligne, colonne) = data[colonne * 4 + ligne].
+// NOTE (non vérifié en conditions réelles) : l'orientation résultante
+// n'a pas encore été testée sur un vrai téléphone — si la tête semble
+// tourner dans le mauvais sens une fois pilotée dans Blender, comparer
+// avec extract_head_rotation() côté Python (webcam) pour ajuster.
+function extractHeadRotation(matrixes) {
+  if (!matrixes || matrixes.length === 0) return null;
+  const { data, rows } = matrixes[0];
+  const get = (r, c) => data[c * rows + r];
+  const out = [];
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) out.push(get(r, c));
+  }
+  return out;
+}
+
 function loop() {
   if (!running) return;
   const nowMs = performance.now();
-  const result = poseLandmarker.detectForVideo(video, nowMs);
+  let poseOk = false;
+  let faceOk = false;
 
-  if (result.landmarks && result.landmarks.length > 0) {
-    const lm = result.landmarks[0];
-    const landmarks = lm.map((p) => ({
-      x: p.x, y: p.y, z: p.z,
-      visibility: p.visibility !== undefined ? p.visibility : 1.0,
-    }));
-    drawSkeleton(lm);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ landmarks }));
+  if (poseLandmarker) {
+    const result = poseLandmarker.detectForVideo(video, nowMs);
+    if (result.landmarks && result.landmarks.length > 0) {
+      const lm = result.landmarks[0];
+      const landmarks = lm.map((p) => ({
+        x: p.x, y: p.y, z: p.z,
+        visibility: p.visibility !== undefined ? p.visibility : 1.0,
+      }));
+      drawSkeleton(lm);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "pose", landmarks }));
+      }
+      poseOk = true;
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     }
-    statusEl.textContent = "OK";
-    statusEl.className = "ok";
-  } else {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    statusEl.textContent = "perdu";
-    statusEl.className = "warn";
   }
+
+  if (faceLandmarker) {
+    const result = faceLandmarker.detectForVideo(video, nowMs);
+    if (result.faceBlendshapes && result.faceBlendshapes.length > 0) {
+      const blendshapes = {};
+      for (const cat of result.faceBlendshapes[0].categories) {
+        blendshapes[cat.categoryName] = cat.score;
+      }
+      const headRotation = extractHeadRotation(result.facialTransformationMatrixes);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "face", blendshapes, head_rotation: headRotation }));
+      }
+      faceOk = true;
+    }
+    if (!poseLandmarker) {
+      // Pas de squelette à dessiner : on affiche quand même le flux vidéo.
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
+  }
+
+  const parts = [];
+  if (poseLandmarker) parts.push(poseOk ? "corps OK" : "corps perdu");
+  if (faceLandmarker) parts.push(faceOk ? "visage OK" : "visage perdu");
+  statusEl.textContent = parts.join(" / ");
+  statusEl.className = (poseLandmarker && !poseOk) || (faceLandmarker && !faceOk) ? "warn" : "ok";
 
   requestAnimationFrame(loop);
 }
@@ -151,13 +212,24 @@ async function start() {
   const vision = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
   );
-  // Réutilise le même fichier .task que le pipeline webcam PC (voir
+  // Réutilise les mêmes fichiers .task que le pipeline webcam PC (voir
   // phone_server.py:_PhoneClientHTTPHandler, sert capture_server/models/).
-  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: "/models/pose_landmarker_lite.task", delegate: "GPU" },
-    runningMode: "VIDEO",
-    numPoses: 1,
-  });
+  if (wantPose) {
+    poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: "/models/pose_landmarker_lite.task", delegate: "GPU" },
+      runningMode: "VIDEO",
+      numPoses: 1,
+    });
+  }
+  if (wantFace) {
+    faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: "/models/face_landmarker.task", delegate: "GPU" },
+      runningMode: "VIDEO",
+      numFaces: 1,
+      outputFaceBlendshapes: true,
+      outputFacialTransformationMatrixes: true,
+    });
+  }
 
   startBtn.textContent = "Activation de la caméra...";
   const stream = await navigator.mediaDevices.getUserMedia({

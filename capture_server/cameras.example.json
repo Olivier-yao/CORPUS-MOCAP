@@ -1,23 +1,22 @@
 {
-  "_comment": "Exemple de configuration multi-caméra (Phase 5, voir camera_config.py et README). Copiez ce fichier (ex. cameras.json) et adaptez-le, puis lancez : python server.py --cameras cameras.json",
+  "_comment": "Exemple de configuration multi-camera (Phase 5, voir camera_config.py et README). Copiez ce fichier (ex. cameras.json) et adaptez-le, puis lancez : python server.py --cameras cameras.json. Ici : 1 webcam PC + 1 telephone suivent tous les deux le corps (le plus recent des deux l'emporte, voir _pick_freshest dans server.py), et un second telephone suit uniquement le visage (MediaPipe.js FaceLandmarker, voir phone_client/).",
 
   "cameras": [
     {
-      "name": "corps",
+      "name": "corps_webcam",
       "source": "webcam:0",
       "pose": true,
       "preview": true
     },
     {
-      "name": "visage",
-      "source": "webcam:1",
-      "face": true,
-      "preview": true
-    },
-    {
-      "name": "mains",
+      "name": "corps_telephone",
       "source": "phone",
       "pose": true
+    },
+    {
+      "name": "visage",
+      "source": "phone",
+      "face": true
     }
   ]
 }

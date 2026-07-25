@@ -4,6 +4,10 @@ capture_server/venv/
 # Modèles MediaPipe téléchargés (voir README.md pour les liens)
 capture_server/models/*.task
 
+# Configuration multi-caméra personnelle (copiée depuis cameras.example.json,
+# propre au matériel de chacun — voir README.md §4ter)
+capture_server/cameras.json
+
 # Cache Python
 __pycache__/
 *.pyc

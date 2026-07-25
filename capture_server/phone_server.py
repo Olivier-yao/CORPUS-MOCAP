@@ -20,13 +20,16 @@ camera_config.py) — un téléphone par rôle (ex. "mains"), pas de
 fusion. Sans ce paramètre (usage historique, un seul téléphone —
 `server.py --source phone`), une connexion est rangée sous le nom
 générique `DEFAULT_SLOT_NAME`. Chaque connexion (nommée ou par défaut) a
-son propre filtre One Euro (état temporel indépendant), et son propre
-indicateur "connecté".
+ses propres filtres One Euro (état temporel indépendant : un pour la
+pose, un pour les blendshapes, un pour la rotation de tête), et son
+propre indicateur "connecté".
 
-Corps uniquement pour cette version (pas de visage/mains depuis le
-téléphone — voir la feuille de route du README pour l'extension future ;
-camera_config.py rejette une configuration "face"/"hands" sur une
-source "phone").
+Corps et/ou visage selon la configuration (le paramètre `?pose=1`/
+`?face=1` dans l'URL indique au navigateur quel(s) détecteur(s)
+MediaPipe.js charger, voir phone_client/index.html) — pas encore les
+mains depuis le téléphone (voir la feuille de route du README pour
+l'extension future ; camera_config.py rejette une configuration
+"hands" sur une source "phone").
 
 Servi en **HTTPS** (certificat auto-signé, voir tls_cert.py), pas en
 HTTP simple : `getUserMedia` (accès caméra) exige un contexte sécurisé,
@@ -55,7 +58,7 @@ from urllib.parse import parse_qs, urlsplit
 import websockets.sync.server
 
 import tls_cert
-from one_euro_filter import LandmarkFilter
+from one_euro_filter import BlendshapeFilter, HeadRotationFilter, LandmarkFilter
 from protocol import NUM_LANDMARKS
 
 PHONE_CLIENT_DIR = os.path.join(os.path.dirname(__file__), "phone_client")
@@ -101,15 +104,23 @@ class _PhoneClientHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
 
 class _PhoneSlot:
-    """État d'une connexion téléphone nommée : filtre dédié (état
-    temporel indépendant des autres téléphones), derniers landmarks
-    filtrés, indicateur de connexion."""
+    """État d'une connexion téléphone nommée : filtres dédiés (état
+    temporel indépendant des autres téléphones) pour la pose ET le
+    visage — un téléphone peut alimenter l'un, l'autre, ou les deux
+    (voir "pose"/"face" dans camera_config.py) — dernières données
+    filtrées, indicateur de connexion."""
 
     def __init__(self, stability: float):
-        self.filter = LandmarkFilter(NUM_LANDMARKS)
-        self.filter.set_stability(stability)
+        self.pose_filter = LandmarkFilter(NUM_LANDMARKS)
+        self.pose_filter.set_stability(stability)
+        self.blendshape_filter = BlendshapeFilter()
+        self.blendshape_filter.set_stability(stability)
+        self.head_rotation_filter = HeadRotationFilter()
+        self.head_rotation_filter.set_stability(stability)
         self.latest_landmarks: list[dict] | None = None
         self.updated_at: float = 0.0
+        # (blendshapes, tracking_ok, head_rotation, horodatage monotonic)
+        self.latest_face: tuple[dict, bool, list[float] | None, float] | None = None
         self.connected = False
 
 
@@ -172,11 +183,21 @@ class PhoneBridge:
                 return None
             return (slot.latest_landmarks, True, slot.updated_at)
 
+    def get_latest_face(self, name: str = DEFAULT_SLOT_NAME) -> tuple[dict, bool, list[float] | None, float] | None:
+        """Même forme que CameraWorker.get_latest_face() dans server.py
+        (blendshapes, tracking_ok, head_rotation, updated_at), pour une
+        fusion uniforme dans run_multi_camera()."""
+        with self._lock:
+            slot = self._slots.get(name)
+            return slot.latest_face if slot is not None else None
+
     def set_stability(self, value: float) -> None:
         with self._lock:
             self._stability = value
             for slot in self._slots.values():
-                slot.filter.set_stability(value)
+                slot.pose_filter.set_stability(value)
+                slot.blendshape_filter.set_stability(value)
+                slot.head_rotation_filter.set_stability(value)
 
     def _handle_ws_connection(self, ws) -> None:
         query = parse_qs(urlsplit(ws.request.path).query)
@@ -192,23 +213,40 @@ class PhoneBridge:
                     payload = json.loads(message)
                 except (json.JSONDecodeError, TypeError):
                     continue
-                landmarks = payload.get("landmarks")
-                if isinstance(landmarks, list) and len(landmarks) == NUM_LANDMARKS:
-                    with self._lock:
-                        slot.latest_landmarks = slot.filter.process(landmarks)
-                        slot.updated_at = time.monotonic()
+                msg_type = payload.get("type", "pose")
+
+                if msg_type == "pose":
+                    landmarks = payload.get("landmarks")
+                    if isinstance(landmarks, list) and len(landmarks) == NUM_LANDMARKS:
+                        with self._lock:
+                            slot.latest_landmarks = slot.pose_filter.process(landmarks)
+                            slot.updated_at = time.monotonic()
+
+                elif msg_type == "face":
+                    raw_blendshapes = payload.get("blendshapes")
+                    raw_head_rotation = payload.get("head_rotation")
+                    if isinstance(raw_blendshapes, dict):
+                        with self._lock:
+                            blendshapes = slot.blendshape_filter.process(raw_blendshapes)
+                            head_rotation = slot.head_rotation_filter.process(raw_head_rotation)
+                            slot.latest_face = (blendshapes, True, head_rotation, time.monotonic())
         except Exception as exc:  # connexion coupée, réseau instable, etc.
             print(f"[phone_server] connexion téléphone '{name}' interrompue : {exc}")
         finally:
             with self._lock:
                 slot.connected = False
                 slot.latest_landmarks = None
+                slot.latest_face = None
             print(f"[phone_server] téléphone déconnecté (caméra '{name}')")
 
-    def start(self, camera_names: list[str] | None = None) -> None:
-        """`camera_names` : noms des caméras "phone" attendues (voir
-        camera_config.py), affichés dans les instructions imprimées —
-        None (ou omis) pour le mode historique un seul téléphone."""
+    def start(self, cameras: list[tuple[str, bool, bool]] | None = None) -> None:
+        """`cameras` : liste de (name, pose, face) pour les caméras
+        "phone" attendues (voir camera_config.py) — utilisée pour
+        construire les URLs imprimées avec les bons paramètres
+        ?cam=&pose=&face=, afin que chaque téléphone sache quel(s)
+        détecteur(s) MediaPipe.js charger (voir phone_client/index.html).
+        None (ou omis) pour le mode historique un seul téléphone (pose
+        uniquement, aucun paramètre de rôle dans l'URL)."""
         local_ip = get_local_ip()
 
         # Un certificat frais par démarrage (voir tls_cert.py), pour les
@@ -243,11 +281,15 @@ class PhoneBridge:
         print("[phone_server] ne réutilisez jamais une adresse notée lors d'une session précédente :")
         print(f"[phone_server]   1. Ouvrez {ws_url} et acceptez l'avertissement (page vide/erreur, normal)")
 
-        if camera_names:
+        if cameras:
             print("[phone_server]   2. Ouvrez, SUR LE TÉLÉPHONE CORRESPONDANT, l'adresse de sa caméra :")
-            for name in camera_names:
-                page_url = f"https://{local_ip}:{self.http_port}/?cam={name}"
-                print(f"[phone_server]        '{name}' : {page_url}")
+            for name, pose, face in cameras:
+                role_params = "&".join(
+                    f"{r}=1" for r, on in (("pose", pose), ("face", face)) if on
+                )
+                page_url = f"https://{local_ip}:{self.http_port}/?cam={name}&{role_params}"
+                roles = "+".join(r for r, on in (("pose", pose), ("face", face)) if on)
+                print(f"[phone_server]        '{name}' ({roles}) : {page_url}")
         else:
             page_url = f"https://{local_ip}:{self.http_port}/"
             print(f"[phone_server]   2. Ouvrez {page_url} et acceptez l'avertissement, puis \"Démarrer la caméra\"")
