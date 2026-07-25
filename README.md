@@ -1,4 +1,4 @@
-# CORPUS-MOCAP — corps + visage + mains (webcam PC ou téléphone)
+# CORPUS-MOCAP — corps + visage + mains (webcam PC, téléphone(s), multi-caméra)
 
 Addon Blender de capture de mouvement. Couvre : capture du squelette (33
 points MediaPipe Pose, via webcam PC ou téléphone), du visage (MediaPipe
@@ -6,11 +6,13 @@ Face Landmarker, 52 coefficients blend shapes ARKit, webcam PC
 uniquement), des mains (MediaPipe Hand Landmarker, 21 points articulés
 par main, webcam PC uniquement), lissage (One Euro Filter), application
 temps réel sur un rig + un mesh à shape keys, enregistrement synchronisé
-en Actions Blender, et un post-traitement optionnel "style cartoon"
-(amplification, squash & stretch, timing — voir Utilisation). Le
-cahier des charges original (`CORPUS-MOCAP_cahier-des-charges.md`) est
-maintenant entièrement couvert ; voir la feuille de route ci-dessous
-pour les extensions au-delà (multi-caméra notamment).
+en Actions Blender, un post-traitement optionnel "style cartoon"
+(amplification, squash & stretch, timing — voir Utilisation), et un
+mode **multi-caméra à rôles** (plusieurs webcams/téléphones simultanés,
+chacun dédié à une partie du rig — voir Installation §4ter). Le cahier
+des charges original (`CORPUS-MOCAP_cahier-des-charges.md`) est
+entièrement couvert ; la multi-caméra est une extension au-delà, voir
+la feuille de route ci-dessous.
 
 ## Architecture
 
@@ -154,6 +156,66 @@ plutôt que de réutiliser une ancienne adresse notée précédemment.
 `Test-NetConnection -ComputerName <ip> -Port 8080` en PowerShell (champ
 `SourceAddress` du résultat = IP réelle actuelle de la machine) aide à
 diagnostiquer un décalage d'adresse.
+
+### 4ter. Optionnel — multi-caméra à rôles (plusieurs webcams et/ou téléphones)
+
+Extension au-delà du cahier des charges original : au lieu d'une seule
+source (webcam OU téléphone), **plusieurs caméras simultanées, chacune
+dédiée à un rôle** — ex. une webcam cadrée sur le visage qui ne pilote
+que le visage, un téléphone posé plus loin qui ne pilote que le corps.
+**Pas de fusion/triangulation multi-angle du même point** (ce n'est pas
+l'objectif ici, voir Limites connues) : chaque caméra alimente
+uniquement le(s) type(s) de message pour lequel/lesquels elle est
+configurée (corps/visage/mains), le protocole vers l'addon
+(`protocol.py`) est inchangé. Nombre de caméras illimité, webcams et
+téléphones combinables librement.
+
+1. Copiez `capture_server/cameras.example.json` (ex. vers `cameras.json`)
+   et adaptez-le à votre matériel :
+
+   ```json
+   {
+     "cameras": [
+       {"name": "corps",  "source": "webcam:0", "pose": true},
+       {"name": "visage", "source": "webcam:1", "face": true},
+       {"name": "mains",  "source": "phone",    "pose": true}
+     ]
+   }
+   ```
+
+   `"source"` : `"webcam:<index>"` (index OpenCV, comme `--camera`) ou
+   `"phone"`. `"pose"`/`"face"`/`"hands"` (bool) : quels modèles
+   MediaPipe tourner sur cette caméra — **une source `"phone"` ne peut
+   avoir que `"pose": true`** (visage/mains pas encore détectés côté
+   téléphone, voir §4bis) ; une configuration invalide est rejetée au
+   démarrage avec un message d'erreur explicite (nom dupliqué, index
+   webcam réutilisé, rôle vide, `face`/`hands` sur un téléphone...).
+   `"preview"` (bool, défaut `true`) : fenêtre d'aperçu OpenCV pour
+   cette caméra (webcam uniquement — un téléphone affiche son propre
+   aperçu sur son propre écran, voir §4bis).
+
+2. Lancez :
+
+   ```powershell
+   python server.py --cameras cameras.json
+   ```
+
+   Ignore `--source`/`--camera`/`--no-face`/`--no-hands` (chaque caméra
+   du fichier définit son propre rôle). Si le fichier contient une ou
+   plusieurs caméras `"phone"`, le terminal affiche une adresse par
+   caméra téléphone (voir §4bis) — chaque téléphone doit ouvrir **son
+   adresse à lui** (`?cam=<name>` dans l'URL), pas celle d'un autre.
+
+3. Une fenêtre d'aperçu OpenCV s'ouvre par webcam configurée (nommée
+   d'après le `"name"` de la caméra), en plus de l'aperçu affiché sur
+   l'écran de chaque téléphone.
+
+Non testé avec du vrai matériel multi-caméra au moment de l'écriture
+(validé par scripts autonomes : chargement/validation de configuration,
+gestion de plusieurs téléphones simultanés avec créneaux/filtres
+indépendants, boucle de fusion complète bout en bout via de vraies
+connexions WebSocket + TCP, gestion propre d'une caméra introuvable) —
+voir Limites connues.
 
 ### 5. Rig, visage et mains de test
 
@@ -536,8 +598,30 @@ Trois options, selon votre cas :
   plusieurs segments dans cette itération.
 - Occlusion (ex: bras croisés) : limite du tracking mono-caméra elle-même
   (MediaPipe perd la capacité à distinguer les membres superposés à
-  l'écran), pas quelque chose de corrigible par le mapping — voir la
-  Phase 5 (multi-caméra) sur la feuille de route ci-dessous.
+  l'écran) — la multi-caméra à rôles (§4ter) ne résout PAS ce cas
+  précis : une seule caméra reste responsable de chaque rôle (corps/
+  visage/mains), pas de fusion de plusieurs angles du même point pour
+  compenser une occlusion sur l'un d'eux. Une vraie triangulation
+  multi-angle reste un travail futur non commencé.
+- **Multi-caméra à rôles** (`capture_server/camera_config.py`,
+  `run_multi_camera` dans `server.py`) : non testé avec du vrai matériel
+  au moment de l'écriture — validé uniquement par scripts autonomes
+  (chargement/validation de configuration avec 7 cas d'erreur couverts,
+  plusieurs téléphones simultanés avec créneaux/filtres indépendants,
+  boucle de fusion complète bout en bout via de vraies connexions
+  WebSocket + TCP avec un faux client Blender, gestion propre d'une
+  caméra webcam introuvable). Si **plusieurs caméras portent le même
+  rôle** (ex. deux caméras `"pose": true`), la politique de fusion est
+  volontairement simpliste — **"la plus récemment mise à jour gagne"**
+  (`_pick_freshest`), pas de moyenne pondérée ni de triangulation ; peut
+  produire un tremblement/saut visible si les deux caméras ont des
+  latences très différentes. Chaque caméra webcam tourne dans son propre
+  thread avec sa propre fenêtre d'aperçu OpenCV (`cv2.imshow`/
+  `cv2.waitKey` appelés depuis ce thread) — fonctionne sous Windows, mais
+  certaines plateformes (notamment macOS) exigent que les fonctions
+  d'interface graphique OpenCV tournent sur le thread principal ; non
+  vérifié sur ces plateformes. La boucle de fusion tourne à ~30 Hz fixe,
+  indépendamment du framerate réel de chaque caméra individuelle.
 - **Style cartoon** (`addon/cartoon_style.py`) : constantes empiriques
   (`AMPLIFICATION_MAX`, `SQUASH_STRETCH_VELOCITY_DEG_PER_FRAME`,
   `SQUASH_STRETCH_MAX`, `EASING_MIN/MAX_HANDLE_FRACTION`), non testées en
@@ -642,7 +726,13 @@ Ordre prévu (cahier des charges + extensions discutées en cours de route) :
    Limites connues (réglage navigateur
    nécessaire pour l'accès caméra, IP locale à reprendre au démarrage du
    serveur).
-8. **Phase 5 — Multi-caméra** (plusieurs téléphones à angles différents,
-   fusion des vues pour plus de précision — d'abord une moyenne pondérée
-   par confiance, triangulation calibrée en raffinement ultérieur si
-   besoin) : pas commencé, conception détaillée à faire le moment venu.
+8. **Phase 5 — Multi-caméra** : reconçue en cours de route — pas une
+   fusion/triangulation de plusieurs angles du même point (l'idée
+   initiale ci-dessus, abandonnée), mais **une caméra dédiée par rôle**
+   (corps/visage/mains), nombre illimité, webcams et téléphones
+   combinables (voir Installation §4ter) : ✅ fait, non testé avec du
+   vrai matériel multi-caméra (voir Limites connues). Une vraie fusion
+   multi-angle de plusieurs caméras sur le MÊME rôle (pour combler une
+   occlusion, ex.) reste un travail futur non commencé — la politique
+   actuelle si deux caméras partagent un rôle est simpliste ("la plus
+   récente gagne", voir Limites connues).

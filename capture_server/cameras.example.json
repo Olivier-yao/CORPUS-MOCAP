@@ -1,0 +1,23 @@
+{
+  "_comment": "Exemple de configuration multi-caméra (Phase 5, voir camera_config.py et README). Copiez ce fichier (ex. cameras.json) et adaptez-le, puis lancez : python server.py --cameras cameras.json",
+
+  "cameras": [
+    {
+      "name": "corps",
+      "source": "webcam:0",
+      "pose": true,
+      "preview": true
+    },
+    {
+      "name": "visage",
+      "source": "webcam:1",
+      "face": true,
+      "preview": true
+    },
+    {
+      "name": "mains",
+      "source": "phone",
+      "pose": true
+    }
+  ]
+}

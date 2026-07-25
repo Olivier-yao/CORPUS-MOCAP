@@ -63,6 +63,7 @@ import numpy as np
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.core.base_options import BaseOptions
 
+import camera_config
 from one_euro_filter import BlendshapeFilter, HandFilter, HeadRotationFilter, LandmarkFilter
 from phone_server import PhoneBridge
 from protocol import (
@@ -151,23 +152,20 @@ def draw_hands_preview(frame_bgr, hands: dict[str, list[dict]] | None) -> None:
 
 class ClientConnection:
     """Gère l'unique client connecté (l'addon Blender) : envoi des trames,
-    lecture des messages de contrôle (ex: changement de stabilité)."""
+    lecture des messages de contrôle (ex: changement de stabilité).
 
-    def __init__(
-        self,
-        sock: socket.socket,
-        landmark_filter: LandmarkFilter,
-        blendshape_filter: BlendshapeFilter,
-        head_rotation_filter: HeadRotationFilter,
-        hand_filter: HandFilter,
-    ):
+    `stability_targets` : tout objet exposant `.set_stability(value)` —
+    en mode source unique, les 4 filtres (landmark/blendshape/head
+    rotation/hand) ; en mode multi-caméra (voir run_multi_camera), un
+    par CameraWorker/PhoneBridge, potentiellement plus de 4. Généralisé
+    ainsi plutôt que 4 paramètres nommés fixes pour ne pas dépendre du
+    nombre de caméras configurées."""
+
+    def __init__(self, sock: socket.socket, stability_targets: list):
         self.sock = sock
         self.sock.setblocking(False)
         self._recv_buffer = b""
-        self._landmark_filter = landmark_filter
-        self._blendshape_filter = blendshape_filter
-        self._head_rotation_filter = head_rotation_filter
-        self._hand_filter = hand_filter
+        self._stability_targets = stability_targets
         self._lock = threading.Lock()
 
     def send_frame(self, landmarks: list[dict], tracking_ok: bool) -> bool:
@@ -211,10 +209,8 @@ class ClientConnection:
                 continue
             if msg.get("type") == "set_stability":
                 value = float(msg.get("value", 0.5))
-                self._landmark_filter.set_stability(value)
-                self._blendshape_filter.set_stability(value)
-                self._head_rotation_filter.set_stability(value)
-                self._hand_filter.set_stability(value)
+                for target in self._stability_targets:
+                    target.set_stability(value)
 
 
 def extract_landmarks(result) -> list[dict] | None:
@@ -397,7 +393,7 @@ def run(
                     conn, addr = server_sock.accept()
                     print(f"[capture_server] addon connecté depuis {addr}")
                     client = ClientConnection(
-                        conn, landmark_filter, blendshape_filter, head_rotation_filter, hand_filter
+                        conn, [landmark_filter, blendshape_filter, head_rotation_filter, hand_filter]
                     )
                 except socket.timeout:
                     pass
@@ -499,6 +495,275 @@ def run(
         cv2.destroyAllWindows()
 
 
+class CameraWorker(threading.Thread):
+    """Thread dédié à UNE caméra webcam configurée (Phase 5, voir
+    camera_config.py) : ouvre son propre flux OpenCV, ne charge que les
+    landmarkers requis par sa configuration (pose/face/hands — jamais
+    plus que nécessaire, pour ne pas gaspiller de calcul), et met à jour
+    un état partagé thread-safe (`get_latest_*`) à chaque trame capturée.
+    Lu par la boucle de fusion de run_multi_camera(), à SA PROPRE
+    cadence — indépendante du rythme de capture de cette caméra (chaque
+    caméra peut avoir son propre framerate/latence, la fusion prend
+    simplement la donnée la plus récente disponible à chaque tick)."""
+
+    def __init__(self, config: camera_config.CameraConfig, model_paths: dict, show_preview: bool):
+        super().__init__(daemon=True, name=f"camera-{config.name}")
+        self.config = config
+        self.show_preview = show_preview and config.preview
+        self._model_paths = model_paths
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+
+        self._landmark_filter = LandmarkFilter(NUM_LANDMARKS) if config.pose else None
+        self._blendshape_filter = BlendshapeFilter() if config.face else None
+        self._head_rotation_filter = HeadRotationFilter() if config.face else None
+        self._hand_filter = HandFilter() if config.hands else None
+
+        # (données, tracking_ok[, head_rotation], horodatage monotonic)
+        self._latest_frame: tuple | None = None
+        self._latest_face: tuple | None = None
+        self._latest_hands: tuple | None = None
+
+    def set_stability(self, value: float) -> None:
+        if self._landmark_filter is not None:
+            self._landmark_filter.set_stability(value)
+        if self._blendshape_filter is not None:
+            self._blendshape_filter.set_stability(value)
+        if self._head_rotation_filter is not None:
+            self._head_rotation_filter.set_stability(value)
+        if self._hand_filter is not None:
+            self._hand_filter.set_stability(value)
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def get_latest_frame(self) -> tuple[list[dict], bool, float] | None:
+        with self._lock:
+            return self._latest_frame
+
+    def get_latest_face(self) -> tuple[dict, bool, list[float] | None, float] | None:
+        with self._lock:
+            return self._latest_face
+
+    def get_latest_hands(self) -> tuple[dict, bool, float] | None:
+        with self._lock:
+            return self._latest_hands
+
+    def run(self) -> None:
+        window_name = f"CORPUS-MOCAP - {self.config.name}"
+
+        if sys.platform == "win32":
+            cap = cv2.VideoCapture(self.config.webcam_index, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(self.config.webcam_index)
+        if not cap.isOpened():
+            print(
+                f"[capture_server] ERREUR : impossible d'ouvrir la caméra "
+                f"'{self.config.name}' (index {self.config.webcam_index}) — cette caméra sera ignorée."
+            )
+            return
+
+        landmarker = create_pose_landmarker(self._model_paths["pose"]) if self.config.pose else None
+        face_landmarker = create_face_landmarker(self._model_paths["face"]) if self.config.face else None
+        hand_landmarker = create_hand_landmarker(self._model_paths["hands"]) if self.config.hands else None
+        frame_timestamp_ms = 0
+
+        try:
+            while not self._stop_event.is_set():
+                ok, frame = cap.read()
+                if not ok:
+                    time.sleep(0.01)
+                    continue
+
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+                frame_timestamp_ms += 1
+                now = time.monotonic()
+
+                raw_landmarks = None
+                tracking_ok = False
+                if landmarker is not None:
+                    result = landmarker.detect_for_video(mp_image, frame_timestamp_ms)
+                    raw_landmarks = extract_landmarks(result)
+                    tracking_ok = raw_landmarks is not None
+                    smoothed = self._landmark_filter.process(raw_landmarks)
+                    with self._lock:
+                        self._latest_frame = (smoothed, tracking_ok, now)
+
+                face_points_2d = None
+                face_tracking_ok = False
+                if face_landmarker is not None:
+                    face_result = face_landmarker.detect_for_video(mp_image, frame_timestamp_ms)
+                    raw_blendshapes = extract_blendshapes(face_result)
+                    raw_head_rotation = extract_head_rotation(face_result)
+                    face_tracking_ok = raw_blendshapes is not None
+                    blendshapes = self._blendshape_filter.process(raw_blendshapes)
+                    head_rotation = self._head_rotation_filter.process(raw_head_rotation)
+                    with self._lock:
+                        self._latest_face = (blendshapes, face_tracking_ok, head_rotation, now)
+                    if self.show_preview:
+                        face_points_2d = extract_face_points_2d(face_result)
+
+                hands = None
+                hands_tracking_ok = False
+                if hand_landmarker is not None:
+                    hand_result = hand_landmarker.detect_for_video(mp_image, frame_timestamp_ms)
+                    raw_hands = extract_hands(hand_result)
+                    hands_tracking_ok = raw_hands is not None
+                    hands = self._hand_filter.process(raw_hands)
+                    with self._lock:
+                        self._latest_hands = (hands, hands_tracking_ok, now)
+
+                if self.show_preview:
+                    if landmarker is not None:
+                        draw_preview(frame, raw_landmarks, tracking_ok)
+                    if hand_landmarker is not None:
+                        draw_hands_preview(frame, hands)
+                    if face_landmarker is not None:
+                        draw_face_preview(frame, face_points_2d)
+                    cv2.putText(
+                        frame, self.config.name, (10, frame.shape[0] - 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2,
+                    )
+                    cv2.imshow(window_name, frame)
+                    cv2.waitKey(1)
+        finally:
+            cap.release()
+            if landmarker is not None:
+                landmarker.close()
+            if face_landmarker is not None:
+                face_landmarker.close()
+            if hand_landmarker is not None:
+                hand_landmarker.close()
+            if self.show_preview:
+                try:
+                    cv2.destroyWindow(window_name)
+                except cv2.error:
+                    pass
+
+
+def _pick_freshest(candidates: list[tuple | None]) -> tuple | None:
+    """Politique de fusion "dernier arrivé gagne" quand plusieurs
+    caméras sont configurées pour le même rôle (ex. deux caméras avec
+    "pose": true) — PAS de triangulation/moyenne pondérée (voir
+    docstring de camera_config.py et Limites connues du README) :
+    retourne le tuple (…, horodatage monotonic) le plus récent parmi
+    `candidates`, ou None si tous absents. Le dernier élément de chaque
+    tuple est toujours l'horodatage, quelle que soit la forme du reste
+    (get_latest_frame/_face/_hands ont des arités différentes)."""
+    best = None
+    for c in candidates:
+        if c is None:
+            continue
+        if best is None or c[-1] > best[-1]:
+            best = c
+    return best
+
+
+def run_multi_camera(
+    host: str,
+    port: int,
+    config: camera_config.MultiCameraConfig,
+    model_paths: dict,
+    show_preview: bool,
+    phone_http_port: int,
+    phone_ws_port: int,
+) -> None:
+    """Phase 5 : une caméra par rôle (voir camera_config.py), pas de
+    fusion multi-angle. Un CameraWorker (thread) par caméra webcam
+    configurée, un PhoneBridge partagé (voir phone_server.py, créneaux
+    nommés) pour toutes les caméras "phone". La boucle principale ici ne
+    capture rien elle-même : elle "fusionne" à sa propre cadence
+    (~30 Hz) les derniers résultats disponibles de chaque caméra
+    concernée par chaque type de message (frame/face/hands) et les
+    envoie à l'addon Blender via le même protocole TCP qu'en mode source
+    unique (protocol.py inchangé)."""
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_sock.bind((host, port))
+    server_sock.listen(1)
+    server_sock.settimeout(0.01)
+    print(f"[capture_server] en attente de l'addon Blender sur {host}:{port} ...")
+
+    def _describe(cam: camera_config.CameraConfig) -> str:
+        roles = "+".join(r for r, on in (("pose", cam.pose), ("face", cam.face), ("hands", cam.hands)) if on)
+        return f"{cam.name} ({cam.source_type}, {roles})"
+
+    print(f"[capture_server] {len(config.cameras)} caméra(s) configurée(s) : " + ", ".join(_describe(c) for c in config.cameras))
+
+    workers: dict[str, CameraWorker] = {}
+    for cam in config.webcam_cameras():
+        worker = CameraWorker(cam, model_paths, show_preview)
+        workers[cam.name] = worker
+        worker.start()
+
+    phone_cams = config.phone_cameras()
+    phone_bridge: PhoneBridge | None = None
+    if phone_cams:
+        phone_bridge = PhoneBridge(phone_http_port, phone_ws_port)
+        phone_bridge.start(camera_names=[c.name for c in phone_cams])
+
+    stability_targets: list = list(workers.values())
+    if phone_bridge is not None:
+        stability_targets.append(phone_bridge)
+
+    client: ClientConnection | None = None
+
+    try:
+        while True:
+            if client is None:
+                try:
+                    conn, addr = server_sock.accept()
+                    print(f"[capture_server] addon connecté depuis {addr}")
+                    client = ClientConnection(conn, stability_targets)
+                except socket.timeout:
+                    pass
+
+            time.sleep(1.0 / 30.0)
+
+            frame_result = _pick_freshest(
+                [workers[c.name].get_latest_frame() for c in config.pose_cameras() if c.name in workers]
+                + [phone_bridge.get_latest_frame(c.name) for c in phone_cams if phone_bridge is not None]
+            )
+            face_result = _pick_freshest(
+                [workers[c.name].get_latest_face() for c in config.face_cameras() if c.name in workers]
+            )
+            hands_result = _pick_freshest(
+                [workers[c.name].get_latest_hands() for c in config.hands_cameras() if c.name in workers]
+            )
+
+            if client is not None:
+                client.poll_control_messages()
+                ok_body = True
+                if frame_result is not None:
+                    landmarks, tracking_ok, _ts = frame_result
+                    ok_body = client.send_frame(landmarks, tracking_ok)
+                ok_face = True
+                if face_result is not None:
+                    blendshapes, face_tracking_ok, head_rotation, _ts = face_result
+                    ok_face = client.send_face(blendshapes, face_tracking_ok, head_rotation)
+                ok_hands = True
+                if hands_result is not None:
+                    hands, hands_tracking_ok, _ts = hands_result
+                    ok_hands = client.send_hands(hands, hands_tracking_ok)
+                if not (ok_body and ok_face and ok_hands):
+                    print("[capture_server] addon déconnecté, en attente d'une nouvelle connexion")
+                    client.sock.close()
+                    client = None
+
+    except KeyboardInterrupt:
+        print("[capture_server] arrêt demandé")
+    finally:
+        for worker in workers.values():
+            worker.stop()
+        for worker in workers.values():
+            worker.join(timeout=2.0)
+        if phone_bridge is not None:
+            phone_bridge.stop()
+        server_sock.close()
+        cv2.destroyAllWindows()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CORPUS-MOCAP capture_server")
     parser.add_argument("--host", default="127.0.0.1")
@@ -524,16 +789,39 @@ if __name__ == "__main__":
     parser.add_argument(
         "--phone-ws-port", type=int, default=8766, help="Port WebSocket des landmarks du téléphone (mode phone)"
     )
-    args = parser.parse_args()
-    run(
-        args.host,
-        args.port,
-        args.camera,
-        args.model,
-        None if args.no_face else args.face_model,
-        None if args.no_hands else args.hand_model,
-        show_preview=not args.no_preview,
-        source=args.source,
-        phone_http_port=args.phone_http_port,
-        phone_ws_port=args.phone_ws_port,
+    parser.add_argument(
+        "--cameras", default=None,
+        help=(
+            "Chemin vers un fichier de configuration multi-caméra (Phase 5, voir "
+            "camera_config.py et cameras.example.json) — active le mode multi-caméra "
+            "à rôles (une caméra par rôle : corps/visage/mains, nombre illimité, "
+            "webcams et téléphones combinables) et ignore --source/--camera/--no-face/"
+            "--no-hands (chaque caméra du fichier définit son propre rôle)."
+        ),
     )
+    args = parser.parse_args()
+
+    if args.cameras:
+        config = camera_config.load(args.cameras)
+        run_multi_camera(
+            args.host,
+            args.port,
+            config,
+            model_paths={"pose": args.model, "face": args.face_model, "hands": args.hand_model},
+            show_preview=not args.no_preview,
+            phone_http_port=args.phone_http_port,
+            phone_ws_port=args.phone_ws_port,
+        )
+    else:
+        run(
+            args.host,
+            args.port,
+            args.camera,
+            args.model,
+            None if args.no_face else args.face_model,
+            None if args.no_hands else args.hand_model,
+            show_preview=not args.no_preview,
+            source=args.source,
+            phone_http_port=args.phone_http_port,
+            phone_ws_port=args.phone_ws_port,
+        )
