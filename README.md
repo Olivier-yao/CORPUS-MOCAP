@@ -551,19 +551,27 @@ Trois options, selon votre cas :
   constantes empiriques du projet si le rendu ne convient pas.
 - **Compagnon mobile** (`capture_server/phone_client/`,
   `phone_server.py`) : **validé en conditions réelles sur Chrome
-  Android (HTTPS)** — **Safari iOS toujours pas confirmé** : bloqué sur
-  la boucle d'avertissement de certificat en test réel, cause
-  identifiée et corrigée (**durée de validité du certificat limitée à
-  2 jours**, `tls_cert.py` — iOS/Safari rejette silencieusement, sans
-  possibilité de "visiter quand même", tout certificat serveur dépassant
-  825 jours de validité, exigence Apple depuis iOS 13, indépendante du
-  fait que ce soit auto-signé ; sans incidence puisque le certificat est
-  de toute façon régénéré à chaque démarrage), **mais pas encore
-  reconfirmé sur un vrai iPhone après ce correctif**. Un second piège
-  déjà corrigé : les URLs affichées par `phone_server.py` **n'incluent
-  plus le paramètre `?ws=...`** — la page déduit l'adresse WebSocket de
-  son propre nom d'hôte, pour éviter de mélanger une IP différente entre
-  la page et ce paramètre lors d'un copié-collé (déjà arrivé en test
+  Android (HTTPS)** — **Safari iOS toujours pas confirmé**, malgré deux
+  correctifs successifs sur le certificat (`tls_cert.py`) après blocage
+  répété en test réel (boucle sur l'avertissement de sécurité, jamais
+  d'accès à la page même après avoir cliqué "visiter ce site web") :
+  (1) durée de validité ramenée à 2 jours — iOS/Safari rejette
+  silencieusement tout certificat serveur dépassant 825 jours, exigence
+  Apple depuis iOS 13 ; (2) ajout des extensions `BasicConstraints`
+  (CA=false), `KeyUsage` et `ExtendedKeyUsage` (serverAuth) — toutes
+  deux listées dans les exigences Apple publiées pour les certificats
+  TLS serveur (support.apple.com/en-us/HT210176), absentes du
+  certificat initial. Aucune des deux incidence sur la régénération à
+  chaque démarrage (toujours < 825 jours, extensions ajoutées
+  systématiquement). **Reste à reconfirmer sur un vrai iPhone** — si le
+  blocage persiste malgré ces deux correctifs, il faudra creuser plus
+  précisément côté Safari (logs iOS, ou tester avec un certificat émis
+  par une AC locale de confiance type mkcert plutôt qu'auto-signé).
+  Un troisième piège déjà corrigé : les URLs affichées par
+  `phone_server.py` **n'incluent plus le paramètre `?ws=...`** — la
+  page déduit l'adresse WebSocket de son propre nom d'hôte, pour éviter
+  de mélanger une IP différente entre la page et ce paramètre lors d'un
+  copié-collé (déjà arrivé en test
   réel, cause d'un échec de connexion). Corps uniquement (visage/mains
   pas encore transmis depuis
   le téléphone — le navigateur n'envoie que les landmarks déjà détectés,

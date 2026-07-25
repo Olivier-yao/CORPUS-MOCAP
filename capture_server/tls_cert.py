@@ -35,7 +35,7 @@ import tempfile
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 
 def _generate_cert_and_key(local_ip: str) -> tuple[bytes, bytes]:
@@ -72,6 +72,28 @@ def _generate_cert_and_key(local_ip: str) -> tuple[bytes, bytes]:
         # l'autre.
         .not_valid_after(now + datetime.timedelta(days=2))
         .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+        # Les trois extensions ci-dessous correspondent aux exigences
+        # Apple publiées pour les certificats TLS serveur
+        # (support.apple.com/en-us/HT210176) — la seule limite de
+        # validité (825 jours, déjà corrigée ci-dessus) n'a PAS suffi à
+        # débloquer Safari iOS en test réel : ces extensions manquantes
+        # sont la cause la plus probable restante (Safari peut rejeter
+        # silencieusement, sans message d'erreur distinct, un certificat
+        # qui ne les inclut pas, même auto-signé et accepté manuellement).
+        .add_extension(
+            x509.BasicConstraints(ca=False, path_length=None), critical=True
+        )
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True, key_encipherment=True, key_cert_sign=False,
+                content_commitment=False, data_encipherment=False, key_agreement=False,
+                crl_sign=False, encipher_only=False, decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
+        )
         .sign(key, hashes.SHA256())
     )
 
