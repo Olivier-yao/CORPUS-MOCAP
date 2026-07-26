@@ -34,6 +34,7 @@ class _CaptureSession:
         self.timer = None
         self.initial_hip_center = None
         self.last_sent_stability = None
+        self.last_sent_primary_camera = None
 
 
 class MOCAP_OT_toggle_capture(bpy.types.Operator):
@@ -113,6 +114,10 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
         if settings.stability != session.last_sent_stability:
             session.client.send_control({"type": "set_stability", "value": settings.stability})
             session.last_sent_stability = settings.stability
+
+        if settings.primary_camera != session.last_sent_primary_camera:
+            session.client.send_control({"type": "set_primary_camera", "name": settings.primary_camera})
+            session.last_sent_primary_camera = settings.primary_camera
 
         try:
             messages = session.client.poll_latest()

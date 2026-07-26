@@ -161,11 +161,12 @@ class ClientConnection:
     ainsi plutôt que 4 paramètres nommés fixes pour ne pas dépendre du
     nombre de caméras configurées."""
 
-    def __init__(self, sock: socket.socket, stability_targets: list):
+    def __init__(self, sock: socket.socket, stability_targets: list, pose_fusion: "PoseSourceFusion | None" = None):
         self.sock = sock
         self.sock.setblocking(False)
         self._recv_buffer = b""
         self._stability_targets = stability_targets
+        self._pose_fusion = pose_fusion
         self._lock = threading.Lock()
 
     def send_frame(self, landmarks: list[dict], tracking_ok: bool) -> bool:
@@ -211,6 +212,9 @@ class ClientConnection:
                 value = float(msg.get("value", 0.5))
                 for target in self._stability_targets:
                     target.set_stability(value)
+            elif msg.get("type") == "set_primary_camera" and self._pose_fusion is not None:
+                name = msg.get("name") or None  # chaîne vide -> None (comportement par défaut)
+                self._pose_fusion.set_primary_override(name)
 
 
 def extract_landmarks(result) -> list[dict] | None:
@@ -790,6 +794,24 @@ class _LimbFusion:
         return current
 
 
+def _select_pose_primary(
+    pose_results: list[tuple[str, str, tuple[list[dict], bool, float] | None]], override: str | None
+) -> tuple[str | None, tuple[list[dict], bool, float] | None]:
+    """Décide quelle caméra "pose" est la primaire cette trame (voir
+    PoseSourceFusion et le panneau Blender "Caméra prioritaire (corps)") :
+    celle demandée par `override` si elle a des données cette trame,
+    sinon la 1ère caméra "pose" de type webcam avec des données. Retourne
+    (name, result), ou (None, None) si rien d'exploitable."""
+    if override:
+        for name, _stype, result in pose_results:
+            if name == override and result is not None:
+                return name, result
+    for name, stype, result in pose_results:
+        if stype == "webcam" and result is not None:
+            return name, result
+    return None, None
+
+
 class PoseSourceFusion:
     """La caméra PRIMAIRE (la webcam parmi les caméras "pose" — voir son
     point d'appel dans run_multi_camera) pilote SEULE et EN CONTINU le
@@ -825,6 +847,14 @@ class PoseSourceFusion:
             _LEG_L_DISTAL: _LimbFusion(_LEG_L_DISTAL),
             _LEG_R_DISTAL: _LimbFusion(_LEG_R_DISTAL),
         }
+        # Nom de caméra imposé par l'utilisateur (panneau Blender —
+        # "Caméra prioritaire (corps)") à la place du choix par défaut
+        # (1ère caméra "pose" de type webcam) — voir set_primary_override
+        # et son point de lecture dans run_multi_camera. None = défaut.
+        self.primary_override: str | None = None
+
+    def set_primary_override(self, name: str | None) -> None:
+        self.primary_override = name
 
     def pick(
         self,
@@ -924,31 +954,29 @@ def run_multi_camera(
                 try:
                     conn, addr = server_sock.accept()
                     print(f"[capture_server] addon connecté depuis {addr}")
-                    client = ClientConnection(conn, stability_targets)
+                    client = ClientConnection(conn, stability_targets, pose_fusion=pose_fusion)
                 except socket.timeout:
                     pass
 
             time.sleep(1.0 / 30.0)
 
-            # Caméra primaire (webcam) : seule autorité pour le buste/
-            # bassin — la première caméra "pose" de type webcam trouvée.
-            # Auxiliaires (téléphones) : renfort par membre uniquement
-            # (voir PoseSourceFusion/_LimbFusion).
-            primary_name = None
-            primary_result = None
-            aux_candidates = []
+            # Résultat brut de chaque caméra "pose" cette trame, quel que
+            # soit son rôle (primaire ou auxiliaire) — décidé ensuite.
+            pose_results: list[tuple[str, str, tuple[list[dict], bool, float] | None]] = []
             for c in config.pose_cameras():
                 if c.source_type == "webcam":
-                    if primary_name is None and c.name in workers:
-                        result = workers[c.name].get_latest_frame()
-                        if result is not None:
-                            primary_name = c.name
-                            primary_result = result
-                elif phone_bridge is not None:
-                    result = phone_bridge.get_latest_frame(c.name)
-                    if result is not None:
-                        landmarks, ok, _ts = result
-                        aux_candidates.append((c.name, landmarks, ok))
+                    result = workers[c.name].get_latest_frame() if c.name in workers else None
+                else:
+                    result = phone_bridge.get_latest_frame(c.name) if phone_bridge is not None else None
+                pose_results.append((c.name, c.source_type, result))
+
+            primary_name, primary_result = _select_pose_primary(pose_results, pose_fusion.primary_override)
+
+            aux_candidates = [
+                (name, result[0], result[1])
+                for name, _stype, result in pose_results
+                if name != primary_name and result is not None
+            ]
             frame_result = pose_fusion.pick(primary_name, primary_result, aux_candidates)
             face_result = _pick_freshest(
                 [workers[c.name].get_latest_face() for c in config.face_cameras() if c.name in workers]

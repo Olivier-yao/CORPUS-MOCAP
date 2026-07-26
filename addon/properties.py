@@ -27,6 +27,21 @@ class MOCAP_Settings(bpy.types.PropertyGroup):
         subtype="FACTOR",
     )
 
+    primary_camera: bpy.props.StringProperty(
+        name="Caméra prioritaire (corps)",
+        description=(
+            "Nom exact d'une caméra du fichier cameras.json (mode multi-caméra) "
+            "à utiliser comme autorité du buste/bassin, à la place de la webcam "
+            "par défaut (voir capture_server/server.py:PoseSourceFusion) — utile "
+            "si une autre caméra (ex. un téléphone) suit mieux/plus vite le corps "
+            "que la webcam. Laisser vide pour le comportement par défaut (la "
+            "première caméra webcam trouvée). N'affecte QUE le buste/bassin — "
+            "les bras/jambes utilisent toujours la caméra la plus confiante en "
+            "renfort, quelle que soit cette caméra prioritaire"
+        ),
+        default="",
+    )
+
     bone_prefix: bpy.props.StringProperty(
         name="Préfixe des os",
         description=(

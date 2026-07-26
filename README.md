@@ -346,6 +346,13 @@ Trois options, selon votre cas :
      nom canonique), `S` pour passer un rôle que votre rig n'a pas,
      `Echap` pour arrêter.
 5. Ajuster **Stabilité** si besoin (léger = plus réactif, fort = plus lissé).
+   En mode multi-caméra (§4ter), **Caméra prioritaire (corps)** permet de
+   remplacer la webcam par une autre caméra "pose" (ex. un téléphone) comme
+   autorité du buste/bassin — utile si la webcam traîne/est moins réactive
+   qu'un téléphone. Champ texte : y saisir exactement le `"name"` d'une
+   caméra de `cameras.json` (ex. `corps_telephone_cote`), vide = défaut
+   (1ère caméra webcam trouvée). N'affecte QUE le buste/bassin — voir
+   PoseSourceFusion pour le fonctionnement complet.
 6. Cliquer **● Enregistrer la performance** — la webcam s'active côté
    `capture_server`, le rig, le visage et/ou les mains doivent suivre vos
    mouvements en temps réel.

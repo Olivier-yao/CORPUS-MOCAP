@@ -83,6 +83,9 @@ class VIEW3D_PT_corpus_mocap(bpy.types.Panel):
             box.label(text="(même réseau WiFi — corps seul pour l'instant)", icon="INFO")
 
         layout.prop(settings, "stability")
+        layout.prop(settings, "primary_camera")
+        if settings.primary_camera:
+            layout.label(text="Doit correspondre exactement à un \"name\" de cameras.json", icon="INFO")
 
         layout.separator()
         icon = "PAUSE" if settings.is_recording else "REC"
