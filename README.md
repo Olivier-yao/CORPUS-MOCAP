@@ -640,12 +640,48 @@ Trois options, selon votre cas :
   (moyenne de `visibility` MediaPipe sur les 33 points), avec hystérésis
   (ne bascule que si l'écart de confiance dépasse
   `POSE_SWITCH_CONFIDENCE_MARGIN`) et lissage sur `POSE_SWITCH_BLEND_FRAMES`
-  trames lors d'une bascule effective — reste une heuristique 2D par
-  caméra, **pas une triangulation 3D** (demanderait un calibrage caméra —
-  position/angle relatifs — qui n'existe pas dans le projet). Validé par
-  script autonome (hystérésis, lissage progressif, disparition d'une
-  caméra, aucune caméra visible) — **pas encore testé en conditions
-  réelles avec deux caméras physiques**.
+  trames lors d'une bascule effective. Validé par script autonome
+  (hystérésis, lissage progressif, disparition d'une caméra, aucune
+  caméra visible) — **pas encore testé en conditions réelles avec
+  plusieurs caméras physiques**.
+
+  **Auto-calibration entre caméras d'angles différents**
+  (`_CameraAutoCalibrator` dans `server.py`) : nécessaire pour un usage
+  face/côté/dos (ex. suivre une rotation complète à 360°) — constaté en
+  test réel, sans elle, basculer vers une caméra d'angle différent (ex.
+  "dos" quand on lui tourne le dos) faisait sauter le personnage vers le
+  "zéro" (position/orientation neutre) de CETTE caméra, perçu comme une
+  annulation de la rotation en cours. Chaque caméra calcule en effet une
+  pose ABSOLUE relative à SON propre point de vue ("identité = face à
+  cette caméra", voir `_torso_orientation_matrix` dans
+  `bone_mapping.py`) — pas de repère partagé entre caméras sans
+  calibrage réel.
+
+  La technique : à la première activation d'une caméra, calcule la
+  transformation rigide (rotation autour de l'axe vertical + translation)
+  qui aligne SA lecture actuelle sur la DERNIÈRE position/orientation
+  connue (peu importe quelle caméra l'a produite) — pas une mesure réelle
+  des caméras, une inférence à partir de la continuité du mouvement au
+  moment de la bascule. Mémorisée par caméra et réappliquée telle quelle
+  ensuite (hypothèse : caméras fixes, pas déplacées pendant la session).
+  Limites connues de cette technique (pas une vraie triangulation 3D avec
+  calibrage mesuré) :
+  - Ne corrige que le **cap (yaw)** et la **position**, pas une différence
+    d'inclinaison/roulis entre caméras (ex. téléphone légèrement penché
+    par rapport à la webcam) — ces axes-là restent non corrigés.
+  - La calibration d'une caméra est figée dès la première fois qu'elle
+    devient active dans la session ; si les épaules/hanches sont mal
+    vues à cet instant précis, la calibration est retardée (retentée à la
+    trame suivante) plutôt que mémorisée avec une valeur médiocre —  mais
+    une fois mémorisée, elle n'est jamais réajustée (pas de dérive
+    accumulée, mais pas d'auto-correction non plus si l'estimation
+    initiale s'avère imparfaite).
+  - Suppose des caméras fixes : un téléphone tenu à la main ou déplacé en
+    cours de session invaliderait sa calibration mémorisée.
+  Validé par script autonome (continuité du cap et de la position à la
+  bascule, calibration identité pour la 1ère caméra de la session) —
+  **pas encore testé en conditions réelles avec plusieurs caméras
+  physiques d'angles différents**.
 
   Chaque caméra webcam tourne dans son propre
   thread avec sa propre fenêtre d'aperçu OpenCV (`cv2.imshow`/
