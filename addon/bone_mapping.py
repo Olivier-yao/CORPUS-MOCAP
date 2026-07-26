@@ -89,6 +89,23 @@ CLAVICLE_DEPTH_DAMPING = 0.25
 # sans rapport avec le geste réel.
 VISIBILITY_THRESHOLD = 0.5
 
+# Seuil dédié, plus permissif, pour les jambes (thigh/shin) uniquement —
+# constaté en test réel : lors d'une rotation complète du corps sur
+# soi-même, genou/cheville perdent en confiance (auto-occlusion) plus
+# facilement que les bras, ce qui gelait les jambes en silence pendant
+# que le bassin/buste continuaient de tourner (rotation anatomiquement
+# incohérente à l'écran — un humain ne peut pas tourner complètement sur
+# lui-même sans que ses jambes suivent). Reste un compromis, pas une
+# vraie solution : jambes plus réactives pendant une rotation, mais aussi
+# plus sensibles au bruit en temps normal ; sur une rotation très ample
+# (le dos face caméra), le tracking mono-caméra lui-même devient
+# fondamentalement peu fiable, ce qu'aucun réglage de seuil ne corrige.
+LEG_VISIBILITY_THRESHOLD = 0.3
+
+# Bones concernés par LEG_VISIBILITY_THRESHOLD (vs VISIBILITY_THRESHOLD
+# pour le reste de LIMB_SEGMENTS, c-à-d les bras).
+_LEG_BONE_NAMES = {"thigh.L", "shin.L", "thigh.R", "shin.R"}
+
 # Amortissement de la torsion buste/bassin (0 = aucune torsion, 1 =
 # pleine sensibilité) — réduit les faux positifs dus au mouvement des
 # bras sans réduire la réactivité de l'inclinaison/direction.
@@ -218,8 +235,8 @@ def translate_role_name(role: str) -> str:
     return label
 
 
-def _visible(landmarks: list[dict], name: str) -> bool:
-    return landmarks[LANDMARK_INDEX[name]]["visibility"] >= VISIBILITY_THRESHOLD
+def _visible(landmarks: list[dict], name: str, threshold: float = VISIBILITY_THRESHOLD) -> bool:
+    return landmarks[LANDMARK_INDEX[name]]["visibility"] >= threshold
 
 
 def _landmark_to_vector(landmark: dict) -> Vector:
@@ -526,7 +543,8 @@ def apply_pose(
         pose_bone = bone(bone_name)
         if pose_bone is None:
             continue
-        if not (_visible(landmarks, start_name) and _visible(landmarks, end_name)):
+        threshold = LEG_VISIBILITY_THRESHOLD if bone_name in _LEG_BONE_NAMES else VISIBILITY_THRESHOLD
+        if not (_visible(landmarks, start_name, threshold) and _visible(landmarks, end_name, threshold)):
             continue  # membre non fiable (souvent hors cadre) : on le gèle
         limb_dir = lm(end_name) - lm(start_name)
         limb_dir.y *= LIMB_DEPTH_DAMPING

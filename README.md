@@ -405,7 +405,14 @@ Trois options, selon votre cas :
   que hanches/jambes soient suivies : si un landmark a une confiance
   MediaPipe trop basse (`VISIBILITY_THRESHOLD` dans `bone_mapping.py`,
   souvent le cas hors cadre), le membre concerné est gelé plutôt que de
-  suivre une position devinée.
+  suivre une position devinée. Les jambes ont un seuil dédié, plus
+  permissif (`LEG_VISIBILITY_THRESHOLD`, constaté en test réel : une
+  rotation complète du corps faisait perdre en confiance genou/cheville
+  — auto-occlusion — et gelait les jambes pendant que bassin/buste
+  continuaient de tourner) — reste un compromis, pas une vraie solution :
+  sur une rotation très ample (dos face caméra), le tracking mono-caméra
+  devient fondamentalement peu fiable, aucun réglage de seuil ne corrige
+  ça.
 - Échelles de translation du bassin (`ROOT_TRANSLATION_SCALE_LATERAL` /
   `ROOT_TRANSLATION_SCALE_DEPTH` dans `bone_mapping.py`) empiriques, à
   ajuster selon votre recul webcam. L'axe de profondeur est volontairement
