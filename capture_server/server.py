@@ -677,113 +677,180 @@ def _pick_freshest(candidates: list[tuple | None]) -> tuple | None:
     return best
 
 
-# Marge de confiance (0-1, moyenne de "visibility" MediaPipe sur les 33
-# landmarks) qu'une caméra doit dépasser par rapport à la caméra "pose"
-# actuellement active pour qu'on bascule vers elle — évite les
-# allers-retours dus à un simple écart de bruit entre deux caméras
-# toutes les deux correctement visibles (voir PoseSourceFusion).
+# Marge de confiance (0-1) qu'une caméra auxiliaire doit dépasser par
+# rapport à la primaire pour qu'on lui emprunte un membre — évite les
+# allers-retours dus à un simple écart de bruit (voir _LimbFusion).
 POSE_SWITCH_CONFIDENCE_MARGIN = 0.15
 
-# Nombre de trames sur lesquelles lisser (interpoler) une bascule de
-# caméra "pose" effective — à ~30 Hz, 6 trames ≈ 200 ms. Évite le saut
-# brutal entre deux points de vue physiquement différents (webcam PC vs
-# téléphone) au moment précis d'un changement de source.
+# Nombre de trames sur lesquelles lisser (interpoler) un emprunt de membre
+# effectif — à ~30 Hz, 6 trames ≈ 200 ms. Évite le saut brutal entre deux
+# points de vue physiquement différents au moment précis du changement.
 POSE_SWITCH_BLEND_FRAMES = 6
 
+# En dessous de cette confiance (0-1, moyenne de "visibility" sur les 2
+# points distaux du membre), la caméra primaire est considérée "en
+# difficulté" sur CE membre précis — seul cas où on regarde les caméras
+# auxiliaires (voir _LimbFusion). Au-dessus, la primaire garde toujours
+# la main, même si une auxiliaire serait momentanément un peu meilleure —
+# elle est l'autorité par défaut, pas de raison de la déloger sans besoin.
+PRIMARY_LIMB_CONFIDENCE_THRESHOLD = 0.4
 
-def _pose_confidence(landmarks: list[dict] | None) -> float:
-    """Confiance moyenne (0-1) d'une trame de landmarks, utilisée par
-    PoseSourceFusion pour comparer deux caméras "pose" — moyenne du champ
-    "visibility" MediaPipe sur les 33 points (0.0 si aucun landmark)."""
-    if not landmarks:
+# Indices MediaPipe Pose des 2 points DISTAUX de chaque membre (coude+
+# poignet, genou+cheville — même convention que LANDMARK_INDEX dans
+# addon/bone_mapping.py) : jamais l'épaule/la hanche (point d'attache),
+# qui reste toujours celle de la caméra primaire — voir PoseSourceFusion.
+_ARM_L_DISTAL = (13, 15)
+_ARM_R_DISTAL = (14, 16)
+_LEG_L_DISTAL = (25, 27)
+_LEG_R_DISTAL = (26, 28)
+
+
+def _limb_confidence(landmarks: list[dict] | None, indices: tuple[int, int]) -> float:
+    """Confiance moyenne (0-1) d'un membre (2 points distaux), utilisée
+    par _LimbFusion pour décider si la primaire est "en difficulté"
+    dessus. 0.0 si pas de landmarks du tout."""
+    if landmarks is None:
         return 0.0
-    return sum(lm["visibility"] for lm in landmarks) / len(landmarks)
+    return sum(landmarks[i]["visibility"] for i in indices) / len(indices)
 
 
-def _blend_landmarks(a: list[dict], b: list[dict], t: float) -> list[dict]:
-    """Interpolation linéaire landmark par landmark (t=0 -> a, t=1 -> b),
-    pour lisser une bascule de caméra "pose" (voir PoseSourceFusion)."""
-    return [
-        {
-            "x": la["x"] + (lb["x"] - la["x"]) * t,
-            "y": la["y"] + (lb["y"] - la["y"]) * t,
-            "z": la["z"] + (lb["z"] - la["z"]) * t,
-            "visibility": la["visibility"] + (lb["visibility"] - la["visibility"]) * t,
-        }
-        for la, lb in zip(a, b)
-    ]
+def _blend_one_landmark(a: dict, b: dict, t: float) -> dict:
+    """Interpolation linéaire d'UN landmark (t=0 -> a, t=1 -> b), pour
+    lisser un emprunt de membre effectif (voir _LimbFusion)."""
+    return {
+        "x": a["x"] + (b["x"] - a["x"]) * t,
+        "y": a["y"] + (b["y"] - a["y"]) * t,
+        "z": a["z"] + (b["z"] - a["z"]) * t,
+        "visibility": a["visibility"] + (b["visibility"] - a["visibility"]) * t,
+    }
 
 
-class PoseSourceFusion:
-    """Remplace "dernier arrivé gagne" (_pick_freshest) pour le rôle
-    "pose" quand plusieurs caméras le partagent (ex. webcam PC +
-    téléphone, voir cameras.json) : basculer selon l'horodatage le plus
-    récent faisait alterner presque à chaque trame entre deux points de
-    vue physiquement différents (les deux caméras mettent à jour en
-    continu, quasiment au même rythme) — d'où le tremblement/désync
-    constaté en test réel (webcam PC + téléphone toutes deux en "pose").
+class _LimbFusion:
+    """Fusion pour UN membre (2 landmarks distaux : coude+poignet ou
+    genou+cheville). La caméra primaire (webcam) reste privilégiée en
+    permanence ; une caméra auxiliaire ne prend le relais QUE pour ce
+    membre précis, et seulement quand la primaire y est clairement en
+    difficulté (PRIMARY_LIMB_CONFIDENCE_THRESHOLD) et qu'une autre voit
+    clairement mieux (POSE_SWITCH_CONFIDENCE_MARGIN) — jamais l'épaule/la
+    hanche (point d'attache), qui reste toujours celle de la primaire :
+    voir PoseSourceFusion pour le compromis assumé (léger décalage visuel
+    possible au point d'attache, si l'auxiliaire empruntée n'est pas
+    exactement dans le même repère que la primaire)."""
 
-    Ici, la caméra choisie est celle dont la confiance moyenne
-    (_pose_confidence, moyenne de "visibility" MediaPipe) est la plus
-    haute, avec deux garde-fous :
-    - hystérésis (POSE_SWITCH_CONFIDENCE_MARGIN) : on ne bascule vers une
-      autre caméra que si elle est CLAIREMENT meilleure, pas sur un écart
-      de bruit minime ;
-    - lissage de quelques trames (POSE_SWITCH_BLEND_FRAMES) lors d'une
-      bascule effective, pour éviter le saut brutal entre deux positions
-      physiquement différentes.
-
-    Reste une heuristique 2D par caméra, PAS une triangulation 3D — une
-    vraie fusion géométrique demanderait un calibrage (position/angle
-    relatifs des caméras) qui n'existe pas dans le projet (voir Limites
-    connues du README). Fait "coopérer" les caméras (utilise celle qui
-    voit le mieux à cet instant, transition adoucie) sans prétendre
-    combiner géométriquement les deux points de vue."""
-
-    def __init__(self) -> None:
+    def __init__(self, indices: tuple[int, int]) -> None:
+        self._indices = indices
         self._active_name: str | None = None
-        self._blend_from: list[dict] | None = None
+        self._blend_from: dict[int, dict] | None = None
         self._blend_frame = 0
+        self._last_output: dict[int, dict] | None = None
 
     def pick(
-        self, candidates: list[tuple[str, list[dict] | None, bool, float]]
-    ) -> tuple[list[dict], bool, float] | None:
-        """`candidates` : (name, landmarks, tracking_ok, timestamp) pour
-        chaque caméra ayant le rôle "pose" cette trame. Retourne
-        (landmarks, tracking_ok, timestamp), même forme que
-        _pick_freshest, ou None si aucune caméra ne voit rien."""
-        visible = [(name, lm, ok, ts, _pose_confidence(lm) if ok else 0.0) for name, lm, ok, ts in candidates if ok]
-        if not visible:
+        self,
+        primary_name: str | None,
+        primary_landmarks: list[dict] | None,
+        auxiliaries: list[tuple[str, list[dict]]],
+    ) -> dict[int, dict] | None:
+        """`auxiliaries` : (name, landmarks) pour chaque caméra "pose"
+        auxiliaire disposant de données valides cette trame. Retourne
+        {index: landmark} pour ce membre (2 entrées), ou None si rien
+        d'exploitable du tout (primaire absente ET aucune auxiliaire)."""
+        primary_conf = _limb_confidence(primary_landmarks, self._indices)
+
+        chosen_name, chosen_landmarks = primary_name, primary_landmarks
+        if primary_conf < PRIMARY_LIMB_CONFIDENCE_THRESHOLD and auxiliaries:
+            best_name, best_landmarks, best_conf = None, None, -1.0
+            for name, landmarks in auxiliaries:
+                conf = _limb_confidence(landmarks, self._indices)
+                if conf > best_conf:
+                    best_name, best_landmarks, best_conf = name, landmarks, conf
+            if best_landmarks is not None and best_conf > primary_conf + POSE_SWITCH_CONFIDENCE_MARGIN:
+                chosen_name, chosen_landmarks = best_name, best_landmarks
+
+        if chosen_landmarks is None:
             self._active_name = None
             self._blend_from = None
+            self._last_output = None
             return None
 
-        current = next((c for c in visible if c[0] == self._active_name), None)
-        best = max(visible, key=lambda c: c[4])
+        current = {i: chosen_landmarks[i] for i in self._indices}
 
-        if current is None or (best[0] != current[0] and best[4] > current[4] + POSE_SWITCH_CONFIDENCE_MARGIN):
-            chosen = best
-        else:
-            chosen = current
-
-        if chosen[0] != self._active_name:
-            # Bascule effective : on part de la dernière position connue
-            # de l'ancienne caméra active (si elle voit toujours quelque
-            # chose cette trame, juste moins bien que la nouvelle) pour
-            # lisser la transition ; sinon (caméra disparue) coupe net —
-            # pas de dernière position fiable à disposition.
-            self._blend_from = current[1] if current is not None else None
+        if chosen_name != self._active_name:
+            self._blend_from = self._last_output
             self._blend_frame = 0
-            self._active_name = chosen[0]
-
-        _name, landmarks, tracking_ok, ts, _conf = chosen
+            self._active_name = chosen_name
 
         if self._blend_from is not None and self._blend_frame < POSE_SWITCH_BLEND_FRAMES:
             t = (self._blend_frame + 1) / POSE_SWITCH_BLEND_FRAMES
-            landmarks = _blend_landmarks(self._blend_from, landmarks, t)
+            current = {i: _blend_one_landmark(self._blend_from[i], current[i], t) for i in self._indices}
             self._blend_frame += 1
             if self._blend_frame >= POSE_SWITCH_BLEND_FRAMES:
                 self._blend_from = None
+
+        self._last_output = current
+        return current
+
+
+class PoseSourceFusion:
+    """La caméra PRIMAIRE (la webcam parmi les caméras "pose" — voir son
+    point d'appel dans run_multi_camera) pilote SEULE et EN CONTINU le
+    buste/bassin (position + rotation, épaules/hanches : indices
+    11/12/23/24) — jamais de bascule d'autorité globale.
+
+    Une tentative précédente (bascule du squelette ENTIER selon la
+    confiance globale, avec auto-calibration entre caméras pour
+    compenser) a été retirée après avoir constaté en test réel qu'elle
+    provoquait une inclinaison/accroupissement erroné au moment de la
+    bascule : le "z"/profondeur MediaPipe change de sens selon l'angle de
+    la caméra (ce qui est une largeur pour une caméra de face devient une
+    profondeur pour une caméra de côté) — une simple rotation/translation
+    ne suffit pas à corriger ça pour une rotation complète du buste (qui
+    dépend fortement de cet axe, voir _torso_orientation_matrix côté
+    addon). Voir Limites connues du README.
+
+    Les AUTRES caméras "pose" (téléphones côté/dos) servent uniquement de
+    **renfort PAR MEMBRE** (bras/jambe, voir _LimbFusion) : si la
+    primaire voit mal un membre précis, on emprunte ses 2 points distaux
+    à la caméra auxiliaire la plus confiante pour CE membre, si elle
+    dépasse clairement la primaire — jamais le buste. Compromis assumé :
+    peut laisser un léger décalage visuel au point d'attache (l'auxiliaire
+    empruntée n'est pas exactement dans le même repère que la primaire),
+    mais localisé et déjà amorti côté addon (LIMB_DEPTH_DAMPING) — sans
+    commune mesure avec le problème de rotation complète du buste que
+    cette approche remplace."""
+
+    def __init__(self) -> None:
+        self._limbs = {
+            _ARM_L_DISTAL: _LimbFusion(_ARM_L_DISTAL),
+            _ARM_R_DISTAL: _LimbFusion(_ARM_R_DISTAL),
+            _LEG_L_DISTAL: _LimbFusion(_LEG_L_DISTAL),
+            _LEG_R_DISTAL: _LimbFusion(_LEG_R_DISTAL),
+        }
+
+    def pick(
+        self,
+        primary_name: str | None,
+        primary_result: tuple[list[dict], bool, float] | None,
+        auxiliaries: list[tuple[str, list[dict], bool]],
+    ) -> tuple[list[dict], bool, float] | None:
+        """`auxiliaries` : (name, landmarks, tracking_ok) pour chaque
+        caméra "pose" auxiliaire cette trame. Retourne (landmarks,
+        tracking_ok, timestamp), même forme que _pick_freshest — None si
+        la primaire n'a rien cette trame (pas d'autorité de secours pour
+        le buste : voir docstring, compromis assumé)."""
+        if primary_result is None:
+            return None
+        primary_landmarks, tracking_ok, ts = primary_result
+        if primary_landmarks is None:
+            return None
+
+        aux_ok = [(name, lm) for name, lm, ok in auxiliaries if ok and lm is not None]
+
+        landmarks = list(primary_landmarks)  # buste/épaules/hanches : toujours ceux de la primaire
+        for indices, limb_fusion in self._limbs.items():
+            borrowed = limb_fusion.pick(primary_name, primary_landmarks, aux_ok)
+            if borrowed is not None:
+                for i in indices:
+                    landmarks[i] = borrowed[i]
 
         return (landmarks, tracking_ok, ts)
 
@@ -863,19 +930,26 @@ def run_multi_camera(
 
             time.sleep(1.0 / 30.0)
 
-            pose_candidates = []
+            # Caméra primaire (webcam) : seule autorité pour le buste/
+            # bassin — la première caméra "pose" de type webcam trouvée.
+            # Auxiliaires (téléphones) : renfort par membre uniquement
+            # (voir PoseSourceFusion/_LimbFusion).
+            primary_name = None
+            primary_result = None
+            aux_candidates = []
             for c in config.pose_cameras():
-                if c.name in workers:
-                    result = workers[c.name].get_latest_frame()
-                    if result is not None:
-                        pose_candidates.append((c.name, *result))
-            if phone_bridge is not None:
-                for c in phone_cams:
-                    if c.pose:
-                        result = phone_bridge.get_latest_frame(c.name)
+                if c.source_type == "webcam":
+                    if primary_name is None and c.name in workers:
+                        result = workers[c.name].get_latest_frame()
                         if result is not None:
-                            pose_candidates.append((c.name, *result))
-            frame_result = pose_fusion.pick(pose_candidates)
+                            primary_name = c.name
+                            primary_result = result
+                elif phone_bridge is not None:
+                    result = phone_bridge.get_latest_frame(c.name)
+                    if result is not None:
+                        landmarks, ok, _ts = result
+                        aux_candidates.append((c.name, landmarks, ok))
+            frame_result = pose_fusion.pick(primary_name, primary_result, aux_candidates)
             face_result = _pick_freshest(
                 [workers[c.name].get_latest_face() for c in config.face_cameras() if c.name in workers]
                 + ([phone_bridge.get_latest_face(c.name) for c in phone_cams if c.face] if phone_bridge is not None else [])

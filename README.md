@@ -636,16 +636,51 @@ Trois options, selon votre cas :
   `_pick_freshest`) depuis que webcam PC + téléphone toutes deux en
   `"pose": true` ont produit un tremblement/désync constaté en test réel
   (bascule quasi à chaque trame entre deux points de vue physiquement
-  différents). `PoseSourceFusion` choisit la caméra la plus **confiante**
-  (moyenne de `visibility` MediaPipe sur les 33 points), avec hystérésis
-  (ne bascule que si l'écart de confiance dépasse
-  `POSE_SWITCH_CONFIDENCE_MARGIN`) et lissage sur `POSE_SWITCH_BLEND_FRAMES`
-  trames lors d'une bascule effective — reste une heuristique 2D par
-  caméra, **pas une triangulation 3D** (demanderait un calibrage caméra —
-  position/angle relatifs — qui n'existe pas dans le projet). Validé par
-  script autonome (hystérésis, lissage progressif, disparition d'une
-  caméra, aucune caméra visible) — **pas encore testé en conditions
-  réelles avec deux caméras physiques**.
+  différents).
+
+  **Historique (2 tentatives retirées après test réel)** — utile pour ne
+  pas les retenter telles quelles :
+  1. *Bascule du squelette entier selon la confiance globale* (caméra la
+     plus confiante en moyenne, hystérésis + lissage) : a réintroduit le
+     même type de problème dès que les caméras avaient des angles très
+     différents (face/côté/dos) plutôt que similaires.
+  2. *Idem + auto-calibration entre caméras* (rotation/translation
+     inférée à la bascule pour préserver la continuité) : a évité le
+     "saut" mais provoqué une **inclinaison/accroupissement erroné** au
+     moment de la bascule — cause identifiée : le "z"/profondeur
+     MediaPipe change de **sens** selon l'angle de la caméra (une largeur
+     pour une caméra de face devient une profondeur pour une caméra de
+     côté), et une simple rotation/translation 2D ne recalibre pas ça
+     correctement pour une rotation complète du buste (qui dépend
+     fortement de cet axe, voir `_torso_orientation_matrix`). Pas un bug
+     ponctuel — une limite de fond du signal MediaPipe mono-caméra.
+
+  **Version actuelle** : la caméra **primaire** (la webcam parmi les
+  caméras "pose") pilote **seule et en continu** le buste/bassin
+  (position + rotation, épaules/hanches) — plus jamais de bascule
+  d'autorité globale. Les caméras auxiliaires (téléphones) servent
+  uniquement de **renfort par membre** (`_LimbFusion`) : si la primaire
+  voit mal un bras/une jambe précis (confiance sous
+  `PRIMARY_LIMB_CONFIDENCE_THRESHOLD`), on emprunte ses 2 points distaux
+  (coude+poignet ou genou+cheville — **jamais** l'épaule/la hanche, qui
+  reste toujours celle de la primaire) à l'auxiliaire la plus confiante
+  pour ce membre, si elle dépasse clairement la primaire
+  (`POSE_SWITCH_CONFIDENCE_MARGIN`), avec lissage
+  (`POSE_SWITCH_BLEND_FRAMES`) lors d'un emprunt ou d'une reprise en main.
+  Compromis assumé, documenté en tête de `PoseSourceFusion` : un léger
+  décalage visuel est possible au point d'attache (épaule/hanche) si le
+  membre emprunté n'est pas exactement dans le même repère que la
+  primaire — mais localisé et déjà amorti côté addon
+  (`LIMB_DEPTH_DAMPING`), sans commune mesure avec les deux problèmes
+  précédents. **Sans caméra webcam dans la configuration, ce mécanisme ne
+  produit aucun tracking du corps** (pas d'autorité de secours pour le
+  buste — compromis assumé, pas un oubli).
+
+  Validé par script autonome (primaire seule inchangée sans auxiliaire,
+  emprunt lissé d'un membre en difficulté sans toucher au buste, reprise
+  en main immédiate — en termes de source — dès que la primaire redevient
+  fiable, aucune sortie sans primaire) — **pas encore testé en conditions
+  réelles avec plusieurs caméras physiques**.
 
   Chaque caméra webcam tourne dans son propre
   thread avec sa propre fenêtre d'aperçu OpenCV (`cv2.imshow`/
