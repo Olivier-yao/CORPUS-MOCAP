@@ -517,8 +517,10 @@ Trois options, selon votre cas :
   un déplacement extrême du poignet).
 - Rotation de tête (`facial_transformation_matrixes` → bone "head") :
   mapping d'axes empirique (`addon/face_mapping.py`, `_MP_TO_RIG`), pas
-  formellement documenté par MediaPipe — à vérifier/ajuster si un axe
-  tourne dans le mauvais sens sur votre configuration caméra.
+  formellement documenté par MediaPipe — la matrice s'est avérée utilisée
+  à l'envers (transposée nécessaire, voir "Visage sur téléphone"
+  ci-dessous) ; si un axe tourne encore dans le mauvais sens après ce
+  correctif, revoir `_MP_TO_RIG` en premier.
 - `tools/generate_test_face.py` attache le mesh de test au bone "head"
   via une contrainte Child Of (matrice inverse calculée au moment du
   setup — nécessite que le bone "head" soit à sa pose de repos, via
@@ -646,21 +648,27 @@ Trois options, selon votre cas :
   vérifié sur ces plateformes. La boucle de fusion tourne à ~30 Hz fixe,
   indépendamment du framerate réel de chaque caméra individuelle.
 - **Visage sur téléphone** (`phone_client/index.html`, `FaceLandmarker`
-  MediaPipe.js) : comme le reste de la multi-caméra, validé uniquement
-  par scripts autonomes (message "face" reçu/filtré/routé par créneau
-  nommé, intégration bout en bout avec un faux client Blender) —
-  **jamais testé avec un vrai téléphone**. Point à vérifier en premier
-  lors du premier test réel : l'orientation de `head_rotation` — la
-  matrice 4x4 renvoyée par `facialTransformationMatrixes` en JS est
-  supposée column-major (`extractHeadRotation` dans index.html), par
-  analogie avec `extract_head_rotation` côté Python (webcam), mais cette
-  hypothèse n'a pas été vérifiée empiriquement ; si la tête tourne dans
-  le mauvais sens une fois pilotée dans Blender, c'est le premier
-  suspect. Un téléphone peut cumuler `"pose"` et `"face"` dans la
-  configuration (les deux détecteurs tournent en parallèle sur le même
-  flux caméra) mais cela n'a pas non plus été testé en conditions
-  réelles — vraisemblablement plus lourd pour un téléphone ancien (voir
-  la limite iPhone SE ci-dessous).
+  MediaPipe.js) : **testé en conditions réelles** — deux problèmes
+  constatés et corrigés :
+  - **Rotation de tête inversée** (pitch ET yaw simultanément — hocher la
+    tête faisait l'inverse, tourner à gauche/droite aussi) :
+    `facialTransformationMatrixes` est bien column-major côté JS
+    (confirmé par la documentation MediaPipe — `extractHeadRotation`
+    dans index.html était correct), le problème était dans
+    `face_mapping.apply_head_rotation` (partagé webcam/téléphone) : la
+    matrice était appliquée telle quelle au lieu de son inverse
+    (transposée, pour une rotation) — **corrigé**, à revalider (le roll
+    n'a pas été testé séparément).
+  - **Mâchoire à peine réactive** (bouche grande ouverte donnait un
+    mouvement à peine visible) : `JAW_OPEN_MAX_ANGLE` (25°) plafonnait
+    l'ouverture bien avant l'amplitude réelle — remonté à 40°
+    (`addon/face_mapping.py`), reste empirique, à réajuster si besoin. Si
+    ça reste insuffisant après ce correctif, vérifier aussi le curseur
+    "Stabilité" du panneau (trop haut = mouvements rapides amortis).
+  - Un téléphone peut cumuler `"pose"` et `"face"` dans la configuration
+    (les deux détecteurs tournent en parallèle sur le même flux caméra)
+    mais cela n'a pas été testé séparément — vraisemblablement plus lourd
+    pour un téléphone ancien (voir la limite iPhone SE ci-dessous).
 - **Style cartoon** (`addon/cartoon_style.py`) : constantes empiriques
   (`AMPLIFICATION_MAX`, `SQUASH_STRETCH_VELOCITY_DEG_PER_FRAME`,
   `SQUASH_STRETCH_MAX`, `EASING_MIN/MAX_HANDLE_FRACTION`), non testées en

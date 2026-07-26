@@ -44,8 +44,10 @@ BROW_OUT_BONE_NAMES = {"L": "brow.out.L", "R": "brow.out.R"}
 # Angle max d'ouverture de la mâchoire (rotation locale autour de l'axe X
 # du bone jaw) pour un coefficient "jawOpen" ARKit à 1.0. Signe empirique
 # (comme _MP_TO_RIG plus bas) — à inverser si la mâchoire s'ouvre vers le
-# haut au lieu du bas sur votre rig.
-JAW_OPEN_MAX_ANGLE = math.radians(25.0)
+# haut au lieu du bas sur votre rig. Remonté de 25° à 40° (constaté en
+# test réel : bouche grande ouverte donnait un mouvement à peine visible
+# à 25°) — reste une valeur empirique, à réajuster si trop/pas assez.
+JAW_OPEN_MAX_ANGLE = math.radians(40.0)
 
 # Déplacement max (mètres, échelle du personnage généré par
 # character_builder.py) d'un sourcil le long de l'axe Y local de son bone
@@ -95,6 +97,16 @@ def apply_head_rotation(
         rest_world_rot = bone_rest_world_rot(pose_bone, armature_obj)
 
         r_mp = Matrix((tuple(rotation_9[0:3]), tuple(rotation_9[3:6]), tuple(rotation_9[6:9])))
+        # Transposée (= inverse, matrice de rotation orthonormale) : testé
+        # en conditions réelles (téléphone), le pitch (hocher la tête) ET
+        # le yaw (tourner la tête gauche/droite) étaient inversés
+        # simultanément — signature d'une matrice utilisée dans le
+        # mauvais sens (from/to inversés) plutôt que deux erreurs de signe
+        # indépendantes sur exactement ces deux axes. Inverser toute la
+        # matrice retourne les 3 axes ensemble d'un coup, de façon
+        # cohérente (roll non signalé comme faux, mais pas testé non
+        # plus — à confirmer).
+        r_mp = r_mp.transposed()
         r_rig = _MP_TO_RIG @ r_mp @ _MP_TO_RIG.transposed()
 
         local_rot = rest_world_rot.inverted() @ r_rig @ rest_world_rot
