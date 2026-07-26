@@ -51,7 +51,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import socket
 import sys
@@ -715,129 +714,14 @@ def _blend_landmarks(a: list[dict], b: list[dict], t: float) -> list[dict]:
     ]
 
 
-# Indices MediaPipe Pose utilisés pour l'auto-calibration entre caméras
-# (même convention que LANDMARK_INDEX dans addon/bone_mapping.py).
-_LEFT_SHOULDER_IDX, _RIGHT_SHOULDER_IDX = 11, 12
-_LEFT_HIP_IDX, _RIGHT_HIP_IDX = 23, 24
-_CALIBRATION_VISIBILITY_THRESHOLD = 0.5
-
-# Calibration identité (aucune correction) : la toute première caméra de
-# la session EST la référence, par définition.
-_IDENTITY_CALIBRATION = (0.0, (0.0, 0.0), (0.0, 0.0, 0.0))
-
-
-def _shoulder_line_angle(landmarks: list[dict]) -> float | None:
-    """Angle (radians, plan x/z brut MediaPipe — PAS l'espace du rig) de
-    la ligne épaule droite -> épaule gauche, utilisé comme indicateur de
-    cap (yaw) pour l'auto-calibration entre caméras (voir
-    _CameraAutoCalibrator). None si l'une des deux épaules n'est pas
-    assez visible pour être fiable."""
-    l, r = landmarks[_LEFT_SHOULDER_IDX], landmarks[_RIGHT_SHOULDER_IDX]
-    if l["visibility"] < _CALIBRATION_VISIBILITY_THRESHOLD or r["visibility"] < _CALIBRATION_VISIBILITY_THRESHOLD:
-        return None
-    return math.atan2(l["z"] - r["z"], l["x"] - r["x"])
-
-
-def _hip_center_xyz(landmarks: list[dict]) -> tuple[float, float, float] | None:
-    """Centre des hanches (x, y, z bruts MediaPipe), pour l'auto-
-    calibration entre caméras (voir _CameraAutoCalibrator). None si l'une
-    des deux hanches n'est pas assez visible."""
-    l, r = landmarks[_LEFT_HIP_IDX], landmarks[_RIGHT_HIP_IDX]
-    if l["visibility"] < _CALIBRATION_VISIBILITY_THRESHOLD or r["visibility"] < _CALIBRATION_VISIBILITY_THRESHOLD:
-        return None
-    return ((l["x"] + r["x"]) / 2.0, (l["y"] + r["y"]) / 2.0, (l["z"] + r["z"]) / 2.0)
-
-
-def _apply_calibration(
-    landmarks: list[dict], calibration: tuple[float, tuple[float, float], tuple[float, float, float]]
-) -> list[dict]:
-    """Applique une calibration (yaw_offset, pivot_xz, translation_xyz) —
-    voir _CameraAutoCalibrator.calibrate — à une trame de landmarks bruts
-    d'une caméra : rotation autour de l'axe vertical (plan x/z, pivot
-    fixe) puis translation, pour ramener cette caméra dans le même repère
-    que la caméra de référence de la session."""
-    if calibration == _IDENTITY_CALIBRATION:
-        return landmarks  # caméra de référence : pas de travail inutile
-    yaw_offset, (pivot_x, pivot_z), (tx, ty, tz) = calibration
-    cos_a, sin_a = math.cos(yaw_offset), math.sin(yaw_offset)
-    result = []
-    for lm in landmarks:
-        dx, dz = lm["x"] - pivot_x, lm["z"] - pivot_z
-        result.append({
-            "x": pivot_x + dx * cos_a - dz * sin_a + tx,
-            "y": lm["y"] + ty,
-            "z": pivot_z + dx * sin_a + dz * cos_a + tz,
-            "visibility": lm["visibility"],
-        })
-    return result
-
-
-class _CameraAutoCalibrator:
-    """Auto-calibration à la volée entre caméras "pose" d'angles
-    physiquement différents (ex. face/côté/dos) — SANS calibrage manuel
-    préalable (aucune mesure de position/angle réel des caméras).
-
-    Le problème résolu : chaque caméra calcule une orientation/position
-    ABSOLUE relative à SON PROPRE point de vue ("identité = face à CETTE
-    caméra" — voir _torso_orientation_matrix dans bone_mapping.py, et le
-    repère (0,0) propre à chaque caméra pour la position). Basculer d'une
-    caméra à l'autre (PoseSourceFusion) sautait donc vers le "zéro" de la
-    nouvelle caméra — perçu comme une annulation de rotation en cours
-    (constaté en test réel : tourner sur soi-même vers une autre caméra
-    remettait le personnage à sa position de départ).
-
-    La technique : au moment où une caméra devient active pour la
-    première fois, on calcule la transformation rigide (rotation autour
-    de l'axe vertical + translation) qui aligne SA lecture actuelle sur
-    la DERNIÈRE position/orientation connue de la caméra précédemment
-    active — pas de mesure réelle des caméras, juste "faire comme si la
-    continuité du corps entre les deux trames faisait foi". Cette
-    transformation est ensuite mémorisée PAR CAMÉRA et réappliquée
-    identique à chaque trame suivante — valable tant que les caméras ne
-    bougent pas physiquement les unes par rapport aux autres pendant la
-    session (hypothèse : caméras fixes, pas tenues à la main)."""
-
-    def __init__(self) -> None:
-        self._calibrations: dict[str, tuple[float, tuple[float, float], tuple[float, float, float]]] = {}
-
-    def calibrate(self, name: str, raw_landmarks: list[dict], reference_landmarks: list[dict] | None) -> tuple:
-        """Retourne la calibration mémorisée pour la caméra `name`, ou la
-        calcule si c'est la première fois qu'elle est vue. Ne mémorise
-        JAMAIS une calibration calculée à partir d'une trame de référence
-        insuffisamment visible (épaules/hanches sous le seuil) — mieux
-        vaut réessayer à la trame suivante que de figer un mauvais
-        alignement pour le reste de la session."""
-        cached = self._calibrations.get(name)
-        if cached is not None:
-            return cached
-
-        if reference_landmarks is None:
-            # Première caméra de toute la session : elle EST la référence.
-            self._calibrations[name] = _IDENTITY_CALIBRATION
-            return _IDENTITY_CALIBRATION
-
-        old_angle = _shoulder_line_angle(reference_landmarks)
-        new_angle = _shoulder_line_angle(raw_landmarks)
-        old_hip = _hip_center_xyz(reference_landmarks)
-        new_hip = _hip_center_xyz(raw_landmarks)
-        if old_angle is None or new_angle is None or old_hip is None or new_hip is None:
-            return _IDENTITY_CALIBRATION  # pas mémorisé : on retentera à la trame suivante
-
-        yaw_offset = old_angle - new_angle
-        pivot = (new_hip[0], new_hip[2])
-        translation = (old_hip[0] - pivot[0], old_hip[1] - new_hip[1], old_hip[2] - pivot[1])
-        calibration = (yaw_offset, pivot, translation)
-        self._calibrations[name] = calibration
-        return calibration
-
-
 class PoseSourceFusion:
     """Remplace "dernier arrivé gagne" (_pick_freshest) pour le rôle
     "pose" quand plusieurs caméras le partagent (ex. webcam PC +
-    téléphone(s), voir cameras.json) : basculer selon l'horodatage le
-    plus récent faisait alterner presque à chaque trame entre deux points
-    de vue physiquement différents — d'où le tremblement/désync constaté
-    en test réel (webcam PC + téléphone toutes deux en "pose").
+    téléphone, voir cameras.json) : basculer selon l'horodatage le plus
+    récent faisait alterner presque à chaque trame entre deux points de
+    vue physiquement différents (les deux caméras mettent à jour en
+    continu, quasiment au même rythme) — d'où le tremblement/désync
+    constaté en test réel (webcam PC + téléphone toutes deux en "pose").
 
     Ici, la caméra choisie est celle dont la confiance moyenne
     (_pose_confidence, moyenne de "visibility" MediaPipe) est la plus
@@ -849,26 +733,17 @@ class PoseSourceFusion:
       bascule effective, pour éviter le saut brutal entre deux positions
       physiquement différentes.
 
-    Pour des caméras d'angles TRÈS différents (face/côté/dos, pas juste
-    deux caméras filmant grosso modo la même face), le lissage seul ne
-    suffit pas : chaque caméra a son propre repère absolu (position ET
-    orientation), voir _CameraAutoCalibrator ci-dessus, appliqué ici à
-    chaque trame avant le lissage — c'est cette étape qui évite le "saut
-    vers la position de départ" quand une caméra d'angle différent prend
-    le relais.
-
-    Reste une heuristique, PAS une triangulation 3D avec calibrage
-    mesuré — l'auto-calibration ci-dessus infère la transformation entre
-    caméras à partir de la continuité du mouvement au moment de la
-    bascule, pas d'une mesure géométrique réelle des caméras (voir
-    Limites connues du README)."""
+    Reste une heuristique 2D par caméra, PAS une triangulation 3D — une
+    vraie fusion géométrique demanderait un calibrage (position/angle
+    relatifs des caméras) qui n'existe pas dans le projet (voir Limites
+    connues du README). Fait "coopérer" les caméras (utilise celle qui
+    voit le mieux à cet instant, transition adoucie) sans prétendre
+    combiner géométriquement les deux points de vue."""
 
     def __init__(self) -> None:
         self._active_name: str | None = None
         self._blend_from: list[dict] | None = None
         self._blend_frame = 0
-        self._last_output_landmarks: list[dict] | None = None
-        self._calibrator = _CameraAutoCalibrator()
 
     def pick(
         self, candidates: list[tuple[str, list[dict] | None, bool, float]]
@@ -891,18 +766,17 @@ class PoseSourceFusion:
         else:
             chosen = current
 
-        name, raw_landmarks, tracking_ok, ts, _conf = chosen
-
-        calibration = self._calibrator.calibrate(name, raw_landmarks, self._last_output_landmarks)
-        landmarks = _apply_calibration(raw_landmarks, calibration)
-
-        if name != self._active_name:
-            # Bascule effective : on part de la dernière trame de SORTIE
-            # (déjà calibrée, donc cohérente quelle que soit la caméra qui
-            # l'a produite) pour lisser la transition.
-            self._blend_from = self._last_output_landmarks
+        if chosen[0] != self._active_name:
+            # Bascule effective : on part de la dernière position connue
+            # de l'ancienne caméra active (si elle voit toujours quelque
+            # chose cette trame, juste moins bien que la nouvelle) pour
+            # lisser la transition ; sinon (caméra disparue) coupe net —
+            # pas de dernière position fiable à disposition.
+            self._blend_from = current[1] if current is not None else None
             self._blend_frame = 0
-            self._active_name = name
+            self._active_name = chosen[0]
+
+        _name, landmarks, tracking_ok, ts, _conf = chosen
 
         if self._blend_from is not None and self._blend_frame < POSE_SWITCH_BLEND_FRAMES:
             t = (self._blend_frame + 1) / POSE_SWITCH_BLEND_FRAMES
@@ -911,7 +785,6 @@ class PoseSourceFusion:
             if self._blend_frame >= POSE_SWITCH_BLEND_FRAMES:
                 self._blend_from = None
 
-        self._last_output_landmarks = landmarks
         return (landmarks, tracking_ok, ts)
 
 
