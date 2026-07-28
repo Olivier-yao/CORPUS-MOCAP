@@ -111,6 +111,11 @@ _LEG_BONE_NAMES = {"thigh.L", "shin.L", "thigh.R", "shin.R"}
 # bras sans réduire la réactivité de l'inclinaison/direction.
 TORSO_TWIST_DAMPING = 0.5
 
+# Amortissement de la torsion des cuisses/tibias injectée depuis la
+# rotation du bassin (voir _leg_twist_quaternion et son appel dans
+# apply_pose) — 1.0 = la jambe tourne à l'identique du bassin.
+LEG_TWIST_DAMPING = 0.8
+
 # Amortissement de l'axe de profondeur (Y) du vecteur de référence de
 # torsion (écart épaule gauche/droite, voir _torso_orientation_matrix) —
 # c'est justement CET axe qui porte le signal "j'ai pivoté sur moi-même"
@@ -369,6 +374,41 @@ def _apply_full_rotation(
     pose_bone.rotation_quaternion = quat
 
 
+def _leg_twist_quaternion(
+    hip_orientation: Matrix, pose_bone: bpy.types.PoseBone, armature_obj: bpy.types.Object, damping: float
+) -> Quaternion | None:
+    """Isole la torsion (rotation autour de l'axe Y local du bone, dans
+    le repère de repos courant de `pose_bone`) correspondant à la
+    rotation du bassin (`hip_orientation`, matrice monde) — à composer
+    APRÈS `_aim_bone` sur une cuisse/tibia.
+
+    Pourquoi c'est nécessaire : `_aim_bone` vise une direction ABSOLUE
+    (hanche -> genou, quasi verticale quel que soit le cap du corps —
+    physiquement le genou ne s'écarte pas du dessous de la hanche quand
+    on pivote sur soi-même) en tenant compte de la matrice *courante* du
+    parent ("hips"). Résultat : la rotation locale calculée COMPENSE
+    automatiquement la rotation du bassin pour continuer à viser la même
+    direction absolue — la jambe reste visuellement immobile pendant une
+    rotation du bassin (constaté en test réel), alors que l'héritage
+    parent/enfant de Blender devrait la faire suivre. Cette fonction
+    réinjecte la torsion manquante après coup, en plus du "aim"."""
+    bone = pose_bone.bone
+    try:
+        rest_world_rot = bone_rest_world_rot(pose_bone, armature_obj)
+        local_rot = rest_world_rot.inverted() @ hip_orientation @ rest_world_rot
+    except ValueError:
+        print(f"[CORPUS-MOCAP] Matrice de repos non-inversible pour l'os '{bone.name}' — torsion de jambe ignorée.")
+        return None
+    quat = local_rot.to_quaternion()
+    twist = Quaternion((quat.w, 0.0, quat.y, 0.0))
+    if twist.magnitude < 1e-6:
+        return None
+    twist.normalize()
+    if damping < 1.0:
+        twist = Quaternion((1.0, 0.0, 0.0, 0.0)).slerp(twist, max(0.0, damping))
+    return twist
+
+
 def _spine_chain_bone_names(prefix: str = "", suffix: str = "", pose_bones=None) -> list[str]:
     """Noms résolus (avec préfixe/suffixe) de la chaîne colonne
     vertébrale : "spine", puis "spine.001", "spine.002", ... tant qu'ils
@@ -469,6 +509,12 @@ def apply_pose(
     hips_visible = _visible(landmarks, "left_hip") and _visible(landmarks, "right_hip")
     shoulders_visible = _visible(landmarks, "left_shoulder") and _visible(landmarks, "right_shoulder")
 
+    # Rotation du bassin (calculée ci-dessous si possible) : réutilisée
+    # plus loin pour injecter la torsion manquante des cuisses/tibias
+    # (voir _leg_twist_quaternion) — héritée au niveau fonction pour
+    # rester accessible dans la boucle LIMB_SEGMENTS.
+    hip_orientation: Matrix | None = None
+
     hips_bone = bone("hips")
     if hips_bone is not None and hips_visible:
         if initial_hip_center is None:
@@ -549,6 +595,16 @@ def apply_pose(
         limb_dir = lm(end_name) - lm(start_name)
         limb_dir.y *= LIMB_DEPTH_DAMPING
         _aim_bone(pose_bone, limb_dir, armature_obj)
+        if bone_name in _LEG_BONE_NAMES and hip_orientation is not None:
+            # "aim" seul (ci-dessus) compense automatiquement la rotation
+            # du bassin pour continuer à viser une direction absolue
+            # quasi constante (hanche -> genou reste vertical quel que
+            # soit le cap) — la jambe resterait sinon visuellement figée
+            # pendant une rotation complète (constaté en test réel) :
+            # voir _leg_twist_quaternion.
+            twist = _leg_twist_quaternion(hip_orientation, pose_bone, armature_obj, LEG_TWIST_DAMPING)
+            if twist is not None:
+                pose_bone.rotation_quaternion = pose_bone.rotation_quaternion @ twist
         bpy.context.view_layer.update()
 
     return hip_center

@@ -407,7 +407,20 @@ Trois options, selon votre cas :
   (généralement sans le préfixe `DEF-`) si l'os de déformation est
   contraint.
 - Retargeting simplifié ("aim" sans gestion du twist/roll) : suffisant
-  pour valider le concept, pas encore un rendu final.
+  pour valider le concept, pas encore un rendu final. **Conséquence
+  concrète pour les jambes, constatée en test réel** : la cuisse/le tibia
+  visent une direction ABSOLUE (hanche -> genou), qui change à peine avec
+  le cap du corps (le genou reste sous la hanche qu'on soit de face, de
+  profil ou de dos) — combiné à `_aim_bone` qui recalcule chaque trame en
+  tenant compte de la matrice *courante* du bassin, la jambe **compense
+  automatiquement** la rotation du bassin et reste visuellement immobile
+  pendant une rotation complète, alors que l'héritage parent/enfant de
+  l'armature (bassin -> cuisse) devrait la faire suivre. Corrigé par
+  `_leg_twist_quaternion` dans `bone_mapping.py` : réinjecte, en plus du
+  "aim", la torsion du bassin sur les cuisses/tibias (amortie via
+  `LEG_TWIST_DAMPING`) — non testé en conditions réelles (pas de
+  Blender/bpy disponible dans cet environnement de dev), comme le reste
+  des changements récents sur ce fichier.
 - **Le cadrage caméra doit couvrir tout le corps** (jusqu'aux pieds) pour
   que hanches/jambes soient suivies : si un landmark a une confiance
   MediaPipe trop basse (`VISIBILITY_THRESHOLD` dans `bone_mapping.py`,
