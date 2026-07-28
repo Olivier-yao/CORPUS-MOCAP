@@ -727,8 +727,19 @@ Trois options, selon votre cas :
   `cv2.waitKey` appelés depuis ce thread) — fonctionne sous Windows, mais
   certaines plateformes (notamment macOS) exigent que les fonctions
   d'interface graphique OpenCV tournent sur le thread principal ; non
-  vérifié sur ces plateformes. La boucle de fusion tourne à ~30 Hz fixe,
-  indépendamment du framerate réel de chaque caméra individuelle.
+  vérifié sur ces plateformes. La boucle de fusion (serveur) et le timer
+  modal (addon) tournent à ~144 Hz fixe (relevé depuis 30 Hz sur demande,
+  pour profiter d'un CPU capable de suivre) — plafond haut, pas une
+  garantie : chaque caméra (webcam, capture MediaPipe.js d'un téléphone)
+  reste limitée par son propre débit matériel réel, souvent bien en
+  dessous de 144 img/s ; au-delà de ce débit réel, la boucle envoie
+  simplement la même dernière trame plusieurs fois (pas de dégradation,
+  mais pas de gain non plus). Revers pour l'addon : plus la cadence est
+  haute, plus l'Action enregistrée contient de keyframes (poids/densité
+  des F-Curves), sans bénéfice au-delà du débit réel des sources — pas
+  testé en conditions réelles quel est le plafond pratique du timer
+  modal de Blender lui-même à cette fréquence (pas de Blender/bpy
+  disponible dans cet environnement de dev).
 - **Visage sur téléphone** (`phone_client/index.html`, `FaceLandmarker`
   MediaPipe.js) : **testé en conditions réelles** — deux problèmes
   constatés et corrigés :

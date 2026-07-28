@@ -420,7 +420,7 @@ def run(
 
             if is_phone:
                 raw_landmarks = phone_bridge.get_latest_landmarks()
-                time.sleep(1.0 / 30.0)  # pas de source bloquante (cap.read()) pour cadencer la boucle
+                time.sleep(1.0 / 144.0)  # pas de source bloquante (cap.read()) pour cadencer la boucle
                 if show_preview:
                     frame = np.zeros((480, 640, 3), dtype=np.uint8)
             else:
@@ -998,7 +998,15 @@ def run_multi_camera(
                 except socket.timeout:
                     pass
 
-            time.sleep(1.0 / 30.0)
+            # Cadence de fusion/envoi — plafond haut (144 Hz, demandé pour
+            # profiter d'un CPU capable de suivre), mais le vrai plafond
+            # reste le matériel de CHAQUE source : une webcam qui ne capture
+            # qu'à 30/60 img/s ou un téléphone dont la détection MediaPipe.js
+            # tourne à ~15-30 img/s ne produiront pas de données plus vite
+            # pour autant — cette boucle enverrait alors simplement la même
+            # dernière trame plusieurs fois de suite (sans dégrader quoi que
+            # ce soit, juste sans gain réel au-delà du vrai débit de la source).
+            time.sleep(1.0 / 144.0)
 
             # Résultat brut de chaque caméra "pose" cette trame, quel que
             # soit son rôle (primaire ou auxiliaire) — décidé ensuite.

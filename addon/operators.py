@@ -74,7 +74,13 @@ class MOCAP_OT_toggle_capture(bpy.types.Operator):
             face_mesh = None
 
         session = _CaptureSession(armature, client, face_mesh, settings.bone_prefix, settings.bone_suffix)
-        session.timer = context.window_manager.event_timer_add(1.0 / 30.0, window=context.window)
+        # Cadence relevée à 144 Hz (voir capture_server/server.py, même
+        # raisonnement : plafonnée en pratique par le matériel de chaque
+        # source, pas par le CPU) — revers de la médaille ici : plus la
+        # cadence est haute, plus l'Action enregistrée contient de
+        # keyframes (poids mémoire, densité des F-Curves), sans gain de
+        # fluidité au-delà du débit réel des sources.
+        session.timer = context.window_manager.event_timer_add(1.0 / 144.0, window=context.window)
         _CaptureSession.instance = session
 
         settings.is_connected = True
