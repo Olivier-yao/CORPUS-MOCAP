@@ -268,10 +268,13 @@ class PhoneBridge:
         uniquement, aucun paramètre de rôle dans l'URL)."""
         local_ip = get_local_ip()
 
-        # Un certificat frais par démarrage (voir tls_cert.py), pour les
-        # deux serveurs (HTTPS + WSS) — même identité de certificat.
-        http_ssl_context = tls_cert.create_ssl_context(local_ip)
-        ws_ssl_context = tls_cert.create_ssl_context(local_ip)
+        # Un certificat frais par démarrage (voir tls_cert.py), partagé
+        # entre les deux serveurs (HTTPS + WSS) — même identité de
+        # certificat (create_ssl_context_pair génère le certificat une
+        # seule fois, contrairement à deux appels séparés à
+        # create_ssl_context qui produiraient chacun un certificat
+        # différent).
+        http_ssl_context, ws_ssl_context = tls_cert.create_ssl_context_pair(local_ip)
 
         self._http_server = http.server.ThreadingHTTPServer(("0.0.0.0", self.http_port), _PhoneClientHTTPHandler)
         self._http_server.socket = http_ssl_context.wrap_socket(self._http_server.socket, server_side=True)

@@ -796,7 +796,11 @@ class MOCAP_OT_apply_cartoon_style(bpy.types.Operator):
     def execute(self, context):
         settings = context.scene.corpus_mocap
         body_action, face_action = cartoon_style.apply_cartoon_style(
-            settings.target_armature, settings.target_face_mesh, settings.cartoon_intensity
+            settings.target_armature,
+            settings.target_face_mesh,
+            settings.cartoon_intensity,
+            settings.bone_prefix,
+            settings.bone_suffix,
         )
 
         names = [a.name for a in (body_action, face_action) if a is not None]

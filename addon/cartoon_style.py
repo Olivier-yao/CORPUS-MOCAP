@@ -28,6 +28,8 @@ import math
 import bpy
 from mathutils import Quaternion
 
+from .bone_mapping import resolve_bone_name
+
 # --- Amplification ---
 # Angle de chaque keyframe de rotation, mesuré par rapport au repos
 # (quaternion identité — apply_pose/_aim_bone n'expriment jamais une
@@ -104,8 +106,18 @@ def _get_or_create_fcurves(action: bpy.types.Action, data_path: str, count: int,
     return curves
 
 
-def _bone_matches_prefix(bone_name: str, prefixes: tuple[str, ...]) -> bool:
-    return any(bone_name == p or bone_name.startswith(p) for p in prefixes)
+def _bone_matches_prefix(bone_name: str, prefixes: tuple[str, ...], bone_prefix: str = "", bone_suffix: str = "") -> bool:
+    """Compare `bone_name` (nom résolu réel, ex. "DEF-spine-suffix") aux
+    rôles canoniques de `prefixes` (ex. "spine") après avoir retiré
+    `bone_prefix`/`bone_suffix` — sans ça, un rig utilisant le préfixe/
+    suffixe configurable du panneau (voir bone_mapping.resolve_bone_name)
+    ne matcherait jamais aucun rôle ici."""
+    name = bone_name
+    if bone_prefix and name.startswith(bone_prefix):
+        name = name[len(bone_prefix):]
+    if bone_suffix and name.endswith(bone_suffix):
+        name = name[: len(name) - len(bone_suffix)]
+    return any(name == p or name.startswith(p) for p in prefixes)
 
 
 def _apply_easing(fcurve: bpy.types.FCurve, intensity: float) -> None:
@@ -231,14 +243,25 @@ def _process_shape_key_value(fcurve: bpy.types.FCurve, intensity: float) -> None
 
 
 def apply_cartoon_style(
-    armature_obj: bpy.types.Object, face_mesh_obj: bpy.types.Object | None, intensity: float
+    armature_obj: bpy.types.Object,
+    face_mesh_obj: bpy.types.Object | None,
+    intensity: float,
+    bone_prefix: str = "",
+    bone_suffix: str = "",
 ) -> tuple[bpy.types.Action | None, bpy.types.Action | None]:
     """Duplique l'Action actuellement assignée à `armature_obj` (et, si
     `face_mesh_obj` a des shape keys animées, sa propre Action) et
     applique le post-traitement "style cartoon" sur les copies, jamais
     sur les Actions d'origine (voir docstring du module). Assigne les
     copies comme Actions actives. Retourne (action_corps_stylisée ou
-    None, action_visage_stylisée ou None)."""
+    None, action_visage_stylisée ou None).
+
+    `bone_prefix`/`bone_suffix` : mêmes réglages que pour la capture (voir
+    bone_mapping.resolve_bone_name) — nécessaires pour reconnaître "hips"
+    et les os à squash & stretch sur un rig dont les os ne sont pas
+    nommés exactement selon la convention par défaut."""
+    hips_name = resolve_bone_name("hips", bone_prefix, bone_suffix)
+
     body_action = None
     if armature_obj.animation_data is not None and armature_obj.animation_data.action is not None:
         source = armature_obj.animation_data.action
@@ -247,10 +270,15 @@ def apply_cartoon_style(
 
         for pose_bone in armature_obj.pose.bones:
             name = pose_bone.name
-            if name == "hips":
+            if name == hips_name:
                 _process_location(body_action, name, intensity)
+                # "hips" a aussi une rotation (voir bone_mapping.apply_pose) —
+                # jamais de squash & stretch dessus (pas dans
+                # SQUASH_STRETCH_BONE_PREFIXES, c'est la racine, pas un
+                # membre qui s'étire).
+                _process_bone_rotation(body_action, name, intensity, apply_stretch=False)
                 continue
-            apply_stretch = _bone_matches_prefix(name, SQUASH_STRETCH_BONE_PREFIXES)
+            apply_stretch = _bone_matches_prefix(name, SQUASH_STRETCH_BONE_PREFIXES, bone_prefix, bone_suffix)
             _process_bone_rotation(body_action, name, intensity, apply_stretch)
 
     face_action = None

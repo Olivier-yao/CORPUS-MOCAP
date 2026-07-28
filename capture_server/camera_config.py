@@ -17,9 +17,8 @@ Exemple (voir aussi cameras.example.json) :
 
 {
   "cameras": [
-    {"name": "corps",  "source": "webcam:0", "pose": true},
-    {"name": "visage", "source": "webcam:1", "face": true},
-    {"name": "mains",  "source": "phone",    "pose": true}
+    {"name": "corps",            "source": "webcam:0", "pose": true, "hands": true},
+    {"name": "visage_telephone", "source": "phone",    "face": true}
   ]
 }
 
@@ -37,11 +36,14 @@ Exemple (voir aussi cameras.example.json) :
   pour cette caméra (webcam uniquement — un téléphone a son propre
   aperçu affiché sur son propre écran).
 
-Si plusieurs caméras portent le même rôle (ex. deux caméras avec
-"pose": true), **la plus récemment mise à jour "gagne"** au moment de
-la fusion (voir server.py) — pas de triangulation/moyenne pondérée.
-Documenté comme limite connue (voir README) : une vraie fusion
-multi-angle reste un travail futur.
+Si plusieurs caméras portent le rôle "face" ou "hands", **la plus
+récemment mise à jour "gagne"** au moment de la fusion (voir
+server.py:_pick_freshest) — pas de triangulation/moyenne pondérée. Le
+rôle "pose" (corps), lui, ne suit plus cette règle : voir
+server.py:PoseSourceFusion (une caméra primaire pilote seule le buste/
+bassin, les autres ne servent que de renfort par membre bras/jambe).
+Documenté comme limite connue (voir README) : une vraie fusion/
+triangulation multi-angle reste un travail futur.
 """
 
 from __future__ import annotations

@@ -106,25 +106,43 @@ def _generate_cert_and_key(local_ip: str) -> tuple[bytes, bytes]:
     return cert_pem, key_pem
 
 
-def create_ssl_context(local_ip: str) -> ssl.SSLContext:
-    """Génère un certificat frais pour `local_ip` et retourne un
-    SSLContext serveur prêt à l'emploi (voir phone_server.PhoneBridge —
-    utilisé à la fois pour le serveur HTTP et le serveur WebSocket, afin
-    que les deux servent sur la même identité de certificat)."""
-    cert_pem, key_pem = _generate_cert_and_key(local_ip)
-
+def _build_ssl_context(cert_pem: bytes, key_pem: bytes) -> ssl.SSLContext:
+    """Construit un SSLContext serveur à partir d'un couple certificat/clé
+    déjà généré. Fichiers temporaires nettoyés dès que `load_cert_chain`
+    les a chargés (il ne lit les fichiers qu'à cet instant précis, rien
+    ne les référence plus ensuite) — `create_ssl_context`/
+    `create_ssl_context_pair` créaient un dossier temporaire à chaque
+    appel sans jamais le supprimer, laissant des dossiers vides
+    s'accumuler dans le dossier temp à chaque redémarrage du serveur."""
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     # load_cert_chain n'accepte que des chemins de fichiers sur les
     # versions de Python ciblées par ce projet (3.10/3.11, voir
     # README) — on passe donc par des fichiers temporaires plutôt que
     # par une API en mémoire.
-    tmp_dir = tempfile.mkdtemp(prefix="corpus_mocap_tls_")
-    cert_path = os.path.join(tmp_dir, "cert.pem")
-    key_path = os.path.join(tmp_dir, "key.pem")
-    with open(cert_path, "wb") as f:
-        f.write(cert_pem)
-    with open(key_path, "wb") as f:
-        f.write(key_pem)
-
-    context.load_cert_chain(cert_path, key_path)
+    with tempfile.TemporaryDirectory(prefix="corpus_mocap_tls_") as tmp_dir:
+        cert_path = os.path.join(tmp_dir, "cert.pem")
+        key_path = os.path.join(tmp_dir, "key.pem")
+        with open(cert_path, "wb") as f:
+            f.write(cert_pem)
+        with open(key_path, "wb") as f:
+            f.write(key_pem)
+        context.load_cert_chain(cert_path, key_path)
     return context
+
+
+def create_ssl_context(local_ip: str) -> ssl.SSLContext:
+    """Génère un certificat frais pour `local_ip` et retourne un unique
+    SSLContext serveur prêt à l'emploi."""
+    cert_pem, key_pem = _generate_cert_and_key(local_ip)
+    return _build_ssl_context(cert_pem, key_pem)
+
+
+def create_ssl_context_pair(local_ip: str) -> tuple[ssl.SSLContext, ssl.SSLContext]:
+    """Comme `create_ssl_context`, mais génère le certificat UNE SEULE
+    fois et construit 2 SSLContext distincts (un pour le serveur HTTP, un
+    pour le serveur WebSocket — voir phone_server.PhoneBridge.start())
+    qui partagent réellement la même identité de certificat, contrairement
+    à deux appels séparés à `create_ssl_context` (qui génèrent chacun un
+    certificat différent malgré l'intention documentée à l'origine)."""
+    cert_pem, key_pem = _generate_cert_and_key(local_ip)
+    return _build_ssl_context(cert_pem, key_pem), _build_ssl_context(cert_pem, key_pem)

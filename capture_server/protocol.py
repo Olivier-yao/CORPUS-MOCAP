@@ -6,7 +6,14 @@ Les messages circulent sur un socket TCP, un objet JSON par ligne
 - server -> addon : trames corps (voir `build_frame_message`), trames
   visage (voir `build_face_message`) et trames mains (voir
   `build_hands_message`), envoyées indépendamment sur la même connexion
-- addon -> server  : messages de contrôle (voir `build_control_message`)
+- addon -> server : messages de contrôle (ex. {"type": "set_stability",
+  "value": ...}, {"type": "set_primary_camera", "name": ...}) — pas de
+  fonction "build_*" ici pour cette direction : l'addon Blender tourne
+  dans un processus/environnement Python séparé (bpy) et ne peut pas
+  importer ce module, il construit ces dicts directement (voir
+  addon/operators.py) ; ClientConnection.poll_control_messages
+  (server.py) les parse par leur "type" au lieu de passer par un builder
+  partagé.
 """
 
 from __future__ import annotations
@@ -69,12 +76,4 @@ def build_hands_message(hands: dict[str, list[dict] | None], tracking_ok: bool) 
         "type": "hands",
         "tracking_ok": tracking_ok,
         "hands": hands,
-    }
-
-
-def build_control_message(stability: float) -> dict:
-    """0.0 = lissage léger, 1.0 = lissage fort."""
-    return {
-        "type": "set_stability",
-        "value": max(0.0, min(1.0, stability)),
     }
