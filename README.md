@@ -694,7 +694,27 @@ Trois options, selon votre cas :
   (`LIMB_DEPTH_DAMPING`), sans commune mesure avec les deux problèmes
   précédents. **Sans caméra webcam dans la configuration, ce mécanisme ne
   produit aucun tracking du corps** (pas d'autorité de secours pour le
-  buste — compromis assumé, pas un oubli).
+  buste — compromis assumé, pas un oubli) ; réglable en assignant
+  n'importe quelle caméra "pose" comme "Caméra prioritaire (corps)" dans
+  le panneau (fonctionne aussi bien avec un téléphone qu'avec une webcam).
+  Le terminal avertit désormais explicitement au démarrage si aucune
+  webcam n'a le rôle "pose" (sans quoi ce cas se traduisait, en pratique,
+  par une absence totale et silencieuse de tracking du corps), et à
+  chaque trame où la "Caméra prioritaire" configurée est introuvable/sans
+  données (repli silencieux sur la webcam par défaut sinon — utile pour
+  repérer une faute de frappe dans le nom saisi).
+
+  `ARM_MIN_BORROW_CONFIDENCE`/`LEG_MIN_BORROW_CONFIDENCE` : plancher de
+  confiance ABSOLU (pas seulement relatif à la primaire) qu'une
+  auxiliaire doit atteindre pour qu'on lui emprunte un membre — sans ça,
+  la fusion pouvait emprunter une auxiliaire tout juste meilleure que la
+  primaire mais toujours sous ce que l'addon exige pour appliquer le
+  membre (`VISIBILITY_THRESHOLD`/`LEG_VISIBILITY_THRESHOLD` dans
+  `bone_mapping.py`), rendant l'emprunt inutile (l'addon aurait gelé le
+  membre de toute façon). Ces deux constantes DOIVENT rester
+  synchronisées manuellement avec celles de `bone_mapping.py` — capture_
+  server et l'addon Blender vivent dans des processus/environnements
+  Python séparés (bpy), pas d'import possible entre les deux.
 
   Validé par script autonome (primaire seule inchangée sans auxiliaire,
   emprunt lissé d'un membre en difficulté sans toucher au buste, reprise

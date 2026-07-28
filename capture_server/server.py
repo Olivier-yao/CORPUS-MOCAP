@@ -708,6 +708,18 @@ _ARM_R_DISTAL = (14, 16)
 _LEG_L_DISTAL = (25, 27)
 _LEG_R_DISTAL = (26, 28)
 
+# Confiance minimale qu'une caméra auxiliaire doit atteindre pour qu'on
+# lui emprunte un membre — DOIVENT rester synchronisés avec
+# VISIBILITY_THRESHOLD/LEG_VISIBILITY_THRESHOLD dans addon/bone_mapping.py
+# (processus/environnement Python séparé — bpy —, pas d'import possible
+# entre les deux). Sans ce plancher, la fusion pourrait "emprunter" une
+# caméra auxiliaire tout juste meilleure que la primaire mais toujours en
+# dessous de ce que l'addon exige pour appliquer le membre — l'emprunt
+# serait alors fait pour rien : l'addon gèlerait le membre de toute façon
+# (voir _visible() côté addon).
+ARM_MIN_BORROW_CONFIDENCE = 0.5   # = VISIBILITY_THRESHOLD (bone_mapping.py)
+LEG_MIN_BORROW_CONFIDENCE = 0.3   # = LEG_VISIBILITY_THRESHOLD (bone_mapping.py)
+
 
 def _limb_confidence(landmarks: list[dict] | None, indices: tuple[int, int]) -> float:
     """Confiance moyenne (0-1) d'un membre (2 points distaux), utilisée
@@ -739,10 +751,19 @@ class _LimbFusion:
     hanche (point d'attache), qui reste toujours celle de la primaire :
     voir PoseSourceFusion pour le compromis assumé (léger décalage visuel
     possible au point d'attache, si l'auxiliaire empruntée n'est pas
-    exactement dans le même repère que la primaire)."""
+    exactement dans le même repère que la primaire).
 
-    def __init__(self, indices: tuple[int, int]) -> None:
+    `min_borrow_confidence` : plancher ABSOLU (pas seulement relatif à la
+    primaire) qu'une auxiliaire doit atteindre pour être empruntée — voir
+    ARM_MIN_BORROW_CONFIDENCE/LEG_MIN_BORROW_CONFIDENCE. Sans ce plancher,
+    on pourrait emprunter une auxiliaire tout juste meilleure que la
+    primaire mais encore en dessous de ce que l'addon exige pour
+    appliquer le membre (VISIBILITY_THRESHOLD/LEG_VISIBILITY_THRESHOLD
+    côté bone_mapping.py) — l'emprunt serait alors fait pour rien."""
+
+    def __init__(self, indices: tuple[int, int], min_borrow_confidence: float) -> None:
         self._indices = indices
+        self._min_borrow_confidence = min_borrow_confidence
         self._active_name: str | None = None
         self._blend_from: dict[int, dict] | None = None
         self._blend_frame = 0
@@ -767,7 +788,11 @@ class _LimbFusion:
                 conf = _limb_confidence(landmarks, self._indices)
                 if conf > best_conf:
                     best_name, best_landmarks, best_conf = name, landmarks, conf
-            if best_landmarks is not None and best_conf > primary_conf + POSE_SWITCH_CONFIDENCE_MARGIN:
+            if (
+                best_landmarks is not None
+                and best_conf >= self._min_borrow_confidence
+                and best_conf > primary_conf + POSE_SWITCH_CONFIDENCE_MARGIN
+            ):
                 chosen_name, chosen_landmarks = best_name, best_landmarks
 
         if chosen_landmarks is None:
@@ -842,10 +867,10 @@ class PoseSourceFusion:
 
     def __init__(self) -> None:
         self._limbs = {
-            _ARM_L_DISTAL: _LimbFusion(_ARM_L_DISTAL),
-            _ARM_R_DISTAL: _LimbFusion(_ARM_R_DISTAL),
-            _LEG_L_DISTAL: _LimbFusion(_LEG_L_DISTAL),
-            _LEG_R_DISTAL: _LimbFusion(_LEG_R_DISTAL),
+            _ARM_L_DISTAL: _LimbFusion(_ARM_L_DISTAL, ARM_MIN_BORROW_CONFIDENCE),
+            _ARM_R_DISTAL: _LimbFusion(_ARM_R_DISTAL, ARM_MIN_BORROW_CONFIDENCE),
+            _LEG_L_DISTAL: _LimbFusion(_LEG_L_DISTAL, LEG_MIN_BORROW_CONFIDENCE),
+            _LEG_R_DISTAL: _LimbFusion(_LEG_R_DISTAL, LEG_MIN_BORROW_CONFIDENCE),
         }
         # Nom de caméra imposé par l'utilisateur (panneau Blender —
         # "Caméra prioritaire (corps)") à la place du choix par défaut
@@ -921,6 +946,15 @@ def run_multi_camera(
 
     print(f"[capture_server] {len(config.cameras)} caméra(s) configurée(s) : " + ", ".join(_describe(c) for c in config.cameras))
 
+    pose_cams_config = config.pose_cameras()
+    if pose_cams_config and not any(c.source_type == "webcam" for c in pose_cams_config):
+        print(
+            "[capture_server] ATTENTION : aucune caméra webcam en rôle \"pose\" — "
+            "sans \"Caméra prioritaire (corps)\" définie dans le panneau Blender, "
+            "PoseSourceFusion n'a aucune autorité pour le buste/bassin et n'enverra "
+            "AUCUN tracking du corps (voir README, PoseSourceFusion)."
+        )
+
     workers: dict[str, CameraWorker] = {}
     for cam in config.webcam_cameras():
         worker = CameraWorker(cam, model_paths, show_preview)
@@ -941,6 +975,12 @@ def run_multi_camera(
     phone_preview_windows: set[str] = set()
 
     pose_fusion = PoseSourceFusion()
+    # Dernière valeur de pose_fusion.primary_override pour laquelle on a
+    # déjà averti qu'elle est introuvable/sans données (voir plus bas) —
+    # évite de spammer le terminal à ~30 Hz tant que le problème persiste,
+    # tout en réavertissant si l'utilisateur change pour un autre nom
+    # tout aussi invalide.
+    last_warned_invalid_override: str | None = None
 
     stability_targets: list = list(workers.values())
     if phone_bridge is not None:
@@ -971,6 +1011,18 @@ def run_multi_camera(
                 pose_results.append((c.name, c.source_type, result))
 
             primary_name, primary_result = _select_pose_primary(pose_results, pose_fusion.primary_override)
+
+            override = pose_fusion.primary_override
+            if override and primary_name != override:
+                if last_warned_invalid_override != override:
+                    print(
+                        f"[capture_server] ATTENTION : caméra prioritaire '{override}' introuvable "
+                        "ou sans données cette trame — vérifiez l'orthographe exacte dans "
+                        "cameras.json. Repli sur le comportement par défaut (1ère webcam trouvée)."
+                    )
+                    last_warned_invalid_override = override
+            else:
+                last_warned_invalid_override = None
 
             aux_candidates = [
                 (name, result[0], result[1])
